@@ -4,6 +4,8 @@ import { money, compact, fmtDate, fmtMonth, relDays, esc, ICON, $ } from '../ui.
 import { daysBetween, monthKey, parts, paydaysInMonth, addDays, addMonths, daysInMonth } from '../domain/dates.js';
 import { isAsset } from '../domain/allocation.js';
 import { txRow, sortTx, notice, bucketColor, deltaHtml } from './common.js';
+import { dividendCheck, pendingBuys, returnsFor } from './invest.js';
+import { outstandingWork } from '../domain/spending.js';
 
 export function homeView(m) {
   if (!m.hasData) return { title: 'Ledger', html: onboarding() };
@@ -121,8 +123,13 @@ function tiles(m) {
     return `<button class="tile" data-tab="goals" style="text-align:left"><div class="tile-label"><span class="dot" style="background:${bucketColor(b)}"></span>${esc(b.label)}</div><div class="tile-value">${money(bal, { whole: true })}</div><div class="tile-note">${esc(note)}</div></button>`;
   });
   const runwayFrom = m.buckets.filter(b => b.assetClass === 'cash' && b.kind !== 'revolving').map(b => b.label).join(' + ');
+  // Returns on the stock accounts (Roth, taxable, 401(k)) where cost basis is known
+  const equityAccts = m.buckets.filter(b => b.assetClass === 'equity' && b.account).map(b => doc.accounts.find(a => a.id === b.account)).filter(a => a?.holdings.length);
+  const eqRets = equityAccts.map(a => returnsFor(a, m.today)).filter(r => r.known);
+  const eqReturn = eqRets.reduce((s, r) => s + r.returnCents, 0);
+  const investedNote = eqRets.length ? `${money(eqReturn, { whole: true, sign: true })} returns` : 'Roth, taxable & 401(k)';
   return `<div class="tiles">
-    <button class="tile" data-tab="invest" style="text-align:left"><div class="tile-label">${small(ICON.invest)}Invested</div><div class="tile-value">${money(m.nw.invested, { whole: true })}</div><div class="tile-note">Roth, taxable & 401(k)</div></button>
+    <button class="tile" data-tab="invest" style="text-align:left"><div class="tile-label">${small(ICON.invest)}Invested</div><div class="tile-value">${money(m.nw.invested, { whole: true })}</div><div class="tile-note${eqRets.length ? (eqReturn >= 0 ? ' good' : ' bad') : ''}">${esc(investedNote)}</div></button>
     <button class="tile" data-tab="plan" style="text-align:left"><div class="tile-label">${small(ICON.coins)}Saved in ${fmtMonth(month, { short: true, year: false })}</div><div class="tile-value">${money(saved, { whole: true })}</div><div class="tile-note">${planned ? `of ${money(planned, { whole: true })} planned` : 'Mark transfers in Plan'}</div></button>
     ${cashTiles.join('')}
     ${m.runway != null ? `<button class="tile" data-tab="goals" style="text-align:left"><div class="tile-label">${small(ICON.shield)}Runway</div><div class="tile-value">${m.runway.toFixed(1)} months</div><div class="tile-note">${esc(runwayFrom)} ÷ ${money(m.burn, { whole: true })}/mo</div></button>` : ''}
@@ -178,6 +185,12 @@ function paycheckCard(m) {
 // ---------------------------------------------------------------- alerts
 export function alerts(m) {
   const out = [];
+  const check = dividendCheck(m);
+  if (check) out.push({ icon: ICON.coins, text: `<strong>Dividend check for ${esc(fmtMonth(check.month, { year: false }))}.</strong> ${esc(check.funds.map(f => f.ticker).join(', '))} paid this month — take a couple of minutes to log the reinvestments from your Schwab receipts.`, action: `<button class="btn small primary" data-action="dividend-check" data-month="${check.month}">Log dividends</button>` });
+  const owed = outstandingWork(doc.transactions);
+  if (owed.items.length) out.push({ icon: ICON.bank, text: `<strong>Work owes you ${money(owed.cents)}</strong> for ${owed.items.length} expense${owed.items.length > 1 ? 's' : ''}, the oldest from ${esc(fmtDate(owed.oldest))}.`, action: '<button class="btn small" data-action="work-reimbursed">Mark reimbursed</button>' });
+  const waiting = doc.accounts.flatMap(a => pendingBuys(a.id).map(c => ({ a, c })));
+  if (waiting.length) out.push({ icon: ICON.invest, text: `${waiting.length} transfer${waiting.length > 1 ? 's' : ''} waiting to be logged as a buy (${esc(waiting.map(w => `${w.a.name} ${money(w.c.cents)}`).join(', '))}).`, action: '<button class="btn small" data-tab="invest">Open Invest</button>' });
   for (const e of m.phaseErrors) out.push({ tone: 'bad', icon: ICON.alert, text: `Plan problem: ${esc(e)}`, action: '<button class="btn small" data-action="edit-phases">Fix plan</button>' });
   for (const u of m.unsent) out.push({ icon: ICON.clock, text: `${u.open} transfer${u.open > 1 ? 's' : ''} from your ${esc(fmtDate(u.date))} paycheck ${u.open > 1 ? 'aren’t' : 'isn’t'} marked as sent.`, action: `<button class="btn small" data-action="open-paycheck" data-date="${u.date}">Review</button>` });
   if (m.hasIncome && m.next) {

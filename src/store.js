@@ -41,7 +41,7 @@ export function emptyDoc() {
     config: defaultConfig(),
     accounts: defaultAccounts(),
     tickerMeta: {},
-    snapshots: [], contributions: [], transactions: [], loans: [], history: [],
+    snapshots: [], contributions: [], transactions: [], loans: [], history: [], dividends: [], purchases: [], dividendChecks: {},
     dismissed: [],
   };
 }
@@ -55,12 +55,17 @@ function cleanAccounts(list) {
   if (!Array.isArray(list)) return defaultAccounts();
   return list.filter(a => a && typeof a === 'object' && str(a.id, 40)).map(a => {
     const seen = new Set();
-    const holdings = (Array.isArray(a.holdings) ? a.holdings : []).map(h => ({ ticker: ticker(h?.ticker), shares: Number(h?.shares) }))
+    const holdings = (Array.isArray(a.holdings) ? a.holdings : [])
+      .map(h => ({ ticker: ticker(h?.ticker), shares: Number(h?.shares), ...(isInt(h?.costCents) ? { costCents: h.costCents } : {}) }))
       .filter(h => h.ticker && Number.isFinite(h.shares) && h.shares >= 0 && !seen.has(h.ticker) && seen.add(h.ticker));
     const targets = (Array.isArray(a.targets) ? a.targets : []).filter(s => s && Array.isArray(s.tickers) && Number.isFinite(s.pct))
       .map(s => ({ label: str(s.label, 40), tickers: s.tickers.map(ticker).filter(Boolean), pct: s.pct, prefer: ticker(s.prefer) || undefined }));
     const cash = Number(a.cash);
-    return { id: str(a.id, 40), name: str(a.name, 40) || 'Account', cash: Number.isFinite(cash) && cash > 0 ? Math.round(cash) : 0, holdings, targets };
+    return {
+      id: str(a.id, 40), name: str(a.name, 40) || 'Account', cash: Number.isFinite(cash) && cash > 0 ? Math.round(cash) : 0, holdings, targets,
+      // dividends/interest the brokerage says you'd earned before you started logging them here
+      ...(isInt(a.incomeCents) && a.incomeCents > 0 ? { incomeCents: a.incomeCents } : {}),
+    };
   });
 }
 
@@ -93,6 +98,9 @@ export function sanitizeDoc(d) {
       entries: l.entries.filter(e => e && isInt(e.cents)).map(e => ({ id: e.id || newId('l'), ...e })),
     })),
     history: rows(d.history, h => isoOk(h.date) && isInt(h.total)),
+    dividends: rows(d.dividends, x => x.accountId && isoOk(x.date) && isInt(x.cents)).map(x => ({ id: x.id || newId('d'), ...x })),
+    purchases: rows(d.purchases, x => x.accountId && x.ticker && isoOk(x.date) && isInt(x.costCents) && Number.isFinite(x.shares)).map(x => ({ id: x.id || newId('b'), ...x })),
+    dividendChecks: d.dividendChecks && typeof d.dividendChecks === 'object' ? Object.fromEntries(Object.entries(d.dividendChecks).filter(([k]) => /^\d{4}-\d{2}$/.test(k))) : {},
     dismissed: Array.isArray(d.dismissed) ? d.dismissed : [],
   };
 }
@@ -155,13 +163,16 @@ export function importJSON(text) {
   const next = sanitizeDoc(parsed);
   for (const acct of next.accounts) {
     const mine = doc.accounts.find(a => a.id === acct.id);
-    if (mine && !acct.holdings.length && mine.holdings.length) { acct.holdings = mine.holdings; acct.cash = mine.cash; }
+    if (mine && !acct.holdings.length && mine.holdings.length) { acct.holdings = mine.holdings; acct.cash = mine.cash; if (mine.incomeCents) acct.incomeCents = mine.incomeCents; }
   }
   for (const mine of doc.accounts) {
     if (!next.accounts.some(a => a.id === mine.id) && (mine.holdings.length || mine.cash)) next.accounts.push(mine);
   }
   next.tickerMeta = { ...doc.tickerMeta, ...next.tickerMeta };
   if (!next.history.length) next.history = doc.history;
+  if (!next.dividends.length) next.dividends = doc.dividends || [];
+  if (!next.purchases.length) next.purchases = doc.purchases || [];
+  if (!Object.keys(next.dividendChecks).length) next.dividendChecks = doc.dividendChecks || {};
   doc = next;
   save();
   return { transactions: next.transactions.length, buckets: next.config.buckets.length, phases: next.config.phases.length };

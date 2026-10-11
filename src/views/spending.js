@@ -2,7 +2,7 @@ import { doc, ui, saveUi, save, newId } from '../store.js';
 import { chart, meter } from '../charts.js';
 import { money, fmtDate, fmtMonth, esc, ICON, openSheet, toast, todayISO, $, $$ } from '../ui.js';
 import { monthKey, parts, daysInMonth, addMonths } from '../domain/dates.js';
-import { CATEGORIES, categoryById, suggestCategory, monthlyBudget } from '../domain/spending.js';
+import { CATEGORIES, categoryById, suggestCategory, monthlyBudget, outstandingWork } from '../domain/spending.js';
 import { parseCents } from '../domain/money.js';
 import { txRow, sortTx, dateLabel } from './common.js';
 
@@ -42,6 +42,12 @@ export function spendingView(m) {
       <span>${isNow && left > 0 ? `${money(Math.floor(left / (days - d + 1)), { whole: true })}/day · ${days - d + 1} days` : `${s.count} transactions`}</span></div>` : ''}
       <p class="note" style="margin:10px 0 0">${bud.source === 'plan' ? 'Budget comes from what your plan sends to spending money this month.' : bud.source === 'override' ? 'Custom budget for this month.' : 'No plan covers this month — tap Budget to set one.'}${s.credits ? ` Includes ${money(s.credits)} of refunds and paybacks.` : ''}</p>
     </div>`;
+
+  const owed = outstandingWork(doc.transactions);
+  if (owed.items.length) {
+    html += `<div class="notice"><span class="ico">💼</span><div style="flex:1;min-width:0"><p><strong>Work owes you ${money(owed.cents)}</strong> for ${owed.items.length} expense${owed.items.length > 1 ? 's' : ''} (oldest ${esc(fmtDate(owed.oldest))}). Not counted in your spending.</p>
+      <div class="actions"><button class="btn small" data-action="work-reimbursed">Mark reimbursed</button></div></div></div>`;
+  }
 
   // six-month trend
   const months = [];
@@ -139,7 +145,9 @@ export function openTxSheet(m, tx = null, defaults = {}) {
         <label class="field"><span>Paid from</span><select name="fundedBy"><option value="">Spending money</option>${funders.map(b => `<option value="${esc(b.id)}" ${t.fundedBy === b.id ? 'selected' : ''}>${esc(b.label)}</option>`).join('')}</select></label>
       </div>
       <label class="check"><input type="checkbox" name="undated" ${t.undated ? 'checked' : ''}> No exact date (counts toward the month)</label>
-      <p class="note">Paying from a fund like Travel takes it out of that fund’s balance instead of your spending budget.</p>
+      <label class="check"><input type="checkbox" name="work" ${t.work ? 'checked' : ''}> 💼 Work expense — I’ll be reimbursed</label>
+      <label class="check" id="tx-reimb" ${t.work && !isNew ? '' : 'hidden'}><input type="checkbox" name="reimbursed" ${t.reimbursedOn ? 'checked' : ''}> Already reimbursed</label>
+      <p class="note">Paying from a fund like Travel takes it out of that fund’s balance instead of your spending budget. Work expenses don’t count as spending; they’re tracked until you’re paid back.</p>
       <p class="err" id="tx-err"></p>
       ${isNew ? '' : `<button type="button" class="btn danger block mt16" id="tx-del">${ICON.trash}Delete transaction</button>`}`,
     onMount: (root, sheet) => {
@@ -169,6 +177,7 @@ export function openTxSheet(m, tx = null, defaults = {}) {
       });
       f.what.addEventListener('input', recat);
       f.undated.addEventListener('change', () => { f.date.disabled = f.undated.checked; });
+      f.work.addEventListener('change', () => { if (!isNew) $('#tx-reimb', root).hidden = !f.work.checked; });
       $('#tx-del', root)?.addEventListener('click', () => {
         if (!confirm(`Delete “${t.item}”?`)) return;
         doc.transactions = doc.transactions.filter(x => x.id !== t.id);
@@ -187,16 +196,52 @@ export function openTxSheet(m, tx = null, defaults = {}) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return err('Pick a date.');
       const item = f.what.value.trim() || 'Untitled';
       const cents = c * sign;
+      const work = f.work.checked;
+      if (work && sign < 0) return err('No need to log the reimbursement itself — mark the work expense as reimbursed instead.');
       const rec = {
         ...t, id: t.id || newId('t'), date, cents, item,
         category: category || suggestCategory(item, cents, doc.transactions),
-        fundedBy: f.fundedBy.value || undefined, undated: undated || undefined,
+        fundedBy: work ? undefined : f.fundedBy.value || undefined, undated: undated || undefined,
+        work: work || undefined,
+        reimbursedOn: work ? (f.reimbursed.checked ? t.reimbursedOn || todayISO() : undefined) : undefined,
         createdAt: t.createdAt || Date.now(),
       };
       if (isNew) doc.transactions.push(rec);
       else doc.transactions = doc.transactions.map(x => x.id === rec.id ? rec : x);
       save();
       toast(isNew ? `Added ${item}` : 'Saved');
+      window.dispatchEvent(new Event('ledger:render'));
+    },
+  });
+}
+
+/** Tick off the work expenses a reimbursement covered. */
+export function openReimburseSheet() {
+  const { items } = outstandingWork(doc.transactions);
+  openSheet({
+    title: 'Mark reimbursed', submitLabel: 'Save',
+    body: `
+      <p class="note" style="margin:4px 4px 12px">Tick the expenses your reimbursement covered.</p>
+      <div class="card flush"><div class="rows plain" style="margin:0">${items.map(t => `<label class="row" style="cursor:pointer">
+        <input type="checkbox" name="r_${esc(t.id)}" checked style="width:22px;height:22px;accent-color:var(--ink);flex:none">
+        <span class="row-main"><span class="row-title" style="display:block">${esc(t.item)}</span><span class="row-sub" style="display:block">${esc(t.undated ? fmtMonth(t.date.slice(0, 7)) : fmtDate(t.date, { weekday: true }))}</span></span>
+        <span class="row-end"><span class="v">${money(t.cents, { mask: false })}</span></span></label>`).join('') || '<div class="empty">Nothing outstanding.</div>'}</div></div>
+      <div class="between mt12" style="margin:12px 4px"><span class="ink2">Reimbursed</span><strong id="r-total" class="num"></strong></div>`,
+    onMount: (root, sheet) => {
+      const total = () => {
+        const sel = items.filter(t => sheet.form.elements['r_' + t.id]?.checked).reduce((s, t) => s + t.cents, 0);
+        $('#r-total', root).textContent = money(sel, { mask: false });
+      };
+      root.addEventListener('change', total);
+      total();
+    },
+    onSubmit: form => {
+      const today = todayISO();
+      let n = 0;
+      for (const t of items) if (form.elements['r_' + t.id]?.checked) { t.reimbursedOn = today; n++; }
+      if (!n) return;
+      save();
+      toast(`${n} expense${n > 1 ? 's' : ''} marked reimbursed`);
       window.dispatchEvent(new Event('ledger:render'));
     },
   });
@@ -243,4 +288,5 @@ export const spendingActions = {
   'spend-cat': el => { ui.spendCat = ui.spendCat === el.dataset.id ? '' : el.dataset.id; saveUi(); return 'render'; },
   'edit-tx': (el, m) => { const t = doc.transactions.find(x => x.id === el.dataset.id); if (t) openTxSheet(m, t); },
   'edit-budget': (el, m) => openBudgetSheet(m, el.dataset.month),
+  'work-reimbursed': () => openReimburseSheet(),
 };

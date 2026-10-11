@@ -69,8 +69,17 @@ export function monthlyBudget(config, month) {
   return { cents, source: any ? 'plan' : 'none' };
 }
 
-/** Transactions that count against the spending budget (not ones paid out of another bucket, like travel). */
-export const countsAsSpending = t => !t.fundedBy;
+/**
+ * Transactions that count against the spending budget: not ones paid out of another bucket (like
+ * travel), and not work expenses your employer pays back.
+ */
+export const countsAsSpending = t => !t.fundedBy && !t.work;
+
+/** Work expenses you've paid but haven't been reimbursed for yet, oldest first. */
+export function outstandingWork(transactions = []) {
+  const items = transactions.filter(t => t.work && !t.reimbursedOn && t.cents > 0).sort((a, b) => a.date.localeCompare(b.date));
+  return { items, cents: items.reduce((s, t) => s + t.cents, 0), oldest: items[0]?.date || null };
+}
 
 /** Totals for one month (`YYYY-MM`). Credits net against spending. */
 export function monthSummary(transactions, month) {

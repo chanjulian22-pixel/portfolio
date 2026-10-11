@@ -80,11 +80,15 @@ export function bucketBalances({ config, snapshots = [], contributions = [], tra
   // A live account can also hold money that belongs to other buckets (e.g. a travel fund kept in
   // the same brokerage account). Those buckets keep their own ledger balance, and the account's
   // bucket gets what's left, so nothing is counted twice.
+  // Transfers marked as sent but not yet logged as buys are in the account as uninvested cash.
   for (const b of liveBuckets) {
     const live = accountValues[b.account];
+    const inAccount = new Set(config.buckets.filter(x => x.account === b.account || x.heldIn === b.account).map(x => x.id));
+    let pending = 0;
+    for (const c of contributions) if (c.pendingBuy && inAccount.has(c.bucketId) && c.date <= asOf) pending += c.cents;
     const inside = config.buckets.filter(x => x.heldIn === b.account && x.id !== b.id && out[x.id]);
     const carved = inside.reduce((a, x) => a + out[x.id].cents, 0);
-    out[b.id] = { cents: live.cents - carved, source: 'live', priced: live.priced, carvedCents: carved, carvedFor: inside.map(x => x.id) };
+    out[b.id] = { cents: live.cents + pending - carved, source: 'live', priced: live.priced, pendingCents: pending, carvedCents: carved, carvedFor: inside.map(x => x.id) };
   }
   return out;
 }

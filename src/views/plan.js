@@ -5,6 +5,8 @@ import { daysBetween, yearOf } from '../domain/dates.js';
 import { taxYear } from '../domain/taxdata.js';
 import { parseCents } from '../domain/money.js';
 import { bucketColor, notice, statusPill } from './common.js';
+import { liveAccountFor, openBuySheet, removeContribution } from './invest.js';
+import { model } from '../model.js';
 
 function paycheckList(m) {
   const seen = new Set();
@@ -65,6 +67,7 @@ export function planView(m) {
             ${esc(b.label)}<small>${esc(sub)}</small>
             ${notes.map(n => `<small style="color:var(--ink-2)">↳ ${n.reason === 'limit' ? 'Maxed for the year' : `At its ${money(n.capCents, { whole: true })} target`} — ${money(n.cents)} to ${esc(bucket(n.to)?.label)}</small>`).join('')}
             ${inbound.map(n => `<small style="color:var(--ink-2)">↳ includes ${money(n.cents)} from ${esc(bucket(n.bucketId)?.label)}</small>`).join('')}
+            ${doc.contributions.some(c => c.paycheck === sel.date && c.bucketId === l.bucketId && c.pendingBuy) ? '<small style="color:var(--ink-2)">↳ buy not logged yet — tap Log buy in Invest</small>' : ''}
           </button>
           <span class="val">${money(l.cents)}${diff ? `<small>${esc(diff)}</small>` : ''}</span>
           ${l.cents > 0 ? `<button class="tick${done > 0 ? ' on' : ''}" data-action="toggle-sent" data-date="${sel.date}" data-bucket="${esc(b.id)}" data-cents="${l.cents}" aria-label="Mark ${esc(b.label)} as sent">${ICON.check}</button>` : '<span style="width:30px"></span>'}
@@ -136,32 +139,61 @@ function taxCard(pay) {
   </div>`;
 }
 
-function setSent(date, bucketId, cents) {
-  doc.contributions = doc.contributions.filter(c => !(c.paycheck === date && c.bucketId === bucketId));
-  if (cents > 0) doc.contributions.push({ id: newId('c'), bucketId, date, cents, paycheck: date });
-  save();
+/** A transfer marked as sent. Money headed to an investment account waits there as cash until you log the buy. */
+function addSent(date, bucketId, cents) {
+  const c = { id: newId('c'), bucketId, date, cents, paycheck: date, at: Date.now() };
+  if (liveAccountFor(bucketId)) c.pendingBuy = true;
+  doc.contributions.push(c);
+  return c;
+}
+
+/** Existing sent records for a paycheck + bucket; false if one has a logged buy and you'd rather keep it. */
+function clearSent(date, bucketId) {
+  const existing = doc.contributions.filter(c => c.paycheck === date && c.bucketId === bucketId);
+  const withBuys = existing.filter(c => c.buyIds?.length);
+  if (withBuys.length) {
+    const what = doc.purchases.filter(p => withBuys.some(c => c.buyIds.includes(p.id))).map(p => `${p.ticker} ${+p.shares.toFixed(4)} sh`).join(', ');
+    if (!confirm(`This also removes the buy you logged (${what}) from your holdings. Continue?`)) return false;
+  }
+  for (const c of existing) removeContribution(c);
+  return true;
 }
 
 export const planActions = {
   'pick-paycheck': el => { ui.planDate = el.dataset.date; saveUi(); return 'render'; },
   'open-paycheck': el => { ui.planDate = el.dataset.date; ui.tab = 'plan'; saveUi(); return 'render'; },
-  'toggle-sent': el => {
+  'toggle-sent': (el, m) => {
     const { date, bucket } = el.dataset;
     const on = doc.contributions.some(c => c.paycheck === date && c.bucketId === bucket);
-    setSent(date, bucket, on ? 0 : Number(el.dataset.cents));
+    if (on) {
+      if (!clearSent(date, bucket)) return;
+      save();
+      return 'render';
+    }
+    const c = addSent(date, bucket, Number(el.dataset.cents));
+    save();
+    const acct = liveAccountFor(bucket);
+    if (acct) setTimeout(() => openBuySheet(model(), acct.id, c.id), 60);
     return 'render';
   },
   'send-all': (el, m) => {
     const sel = { date: el.dataset.date, index: Number(el.dataset.index) };
     const plan = m.planFor(sel);
-    for (const l of plan.lines || []) if (l.cents > 0 && !(plan.done[l.bucketId] > 0)) doc.contributions.push({ id: newId('c'), bucketId: l.bucketId, date: sel.date, cents: l.cents, paycheck: sel.date });
+    let toLog = 0;
+    for (const l of plan.lines || []) {
+      if (l.cents > 0 && !(plan.done[l.bucketId] > 0)) { if (addSent(sel.date, l.bucketId, l.cents).pendingBuy) toLog++; }
+    }
     save();
-    toast('All transfers marked as sent');
+    toast(toLog ? `Marked as sent — log ${toLog} buy${toLog > 1 ? 's' : ''} in Invest when ${toLog > 1 ? 'they fill' : 'it fills'}` : 'All transfers marked as sent');
     return 'render';
   },
   'edit-sent': (el, m) => {
     const { date, bucket } = el.dataset;
     const b = m.bucketById[bucket];
+    if (doc.contributions.some(c => c.paycheck === date && c.bucketId === bucket && c.buyIds?.length)) {
+      toast('This transfer has a logged buy — untick it first to change the amount.', true);
+      return;
+    }
     const done = doc.contributions.filter(c => c.paycheck === date && c.bucketId === bucket).reduce((a, c) => a + c.cents, 0);
     openSheet({
       title: b.label,
@@ -172,8 +204,12 @@ export const planActions = {
       onSubmit: form => {
         const c = parseCents(form.elements.amount.value);
         if (!Number.isFinite(c) || c < 0) { $('#s-err', form).textContent = 'Enter an amount.'; return false; }
-        setSent(date, bucket, c);
+        if (!clearSent(date, bucket)) return false;
+        const added = c > 0 ? addSent(date, bucket, c) : null;
+        save();
         window.dispatchEvent(new Event('ledger:render'));
+        const acct = added && liveAccountFor(bucket);
+        if (acct) setTimeout(() => openBuySheet(model(), acct.id, added.id), 260);
       },
     });
   },

@@ -2,11 +2,11 @@ import { doc, ui, saveUi, save } from './store.js';
 import { model, invalidate } from './model.js';
 import { prices, refreshQuotes } from './prices.js';
 import { mountCharts, clearCharts } from './charts.js';
-import { $, ICON, toast, view } from './ui.js';
+import { $, ICON, toast, view, todayISO } from './ui.js';
 import { homeView, homeActions } from './views/home.js';
 import { spendingView, spendingActions, openTxSheet } from './views/spending.js';
 import { planView, planActions } from './views/plan.js';
-import { investView, investActions } from './views/invest.js';
+import { investView, investActions, investmentTotals } from './views/invest.js';
 import { goalsView, goalsActions } from './views/goals.js';
 import { settingsActions, importFile } from './views/settings.js';
 
@@ -63,15 +63,12 @@ function render(opts = {}) {
 /** One net-worth point per day the app is opened — this becomes your history chart. */
 function recordHistory(m) {
   if (!m.hasData) return;
-  const last = doc.history[doc.history.length - 1];
   const entry = { date: m.today, total: m.nw.total, assets: m.nw.assets, byBucket: Object.fromEntries(Object.entries(m.balances).map(([k, v]) => [k, v.cents])) };
-  if (last && last.date === m.today) {
-    if (last.total === entry.total) return;
-    doc.history[doc.history.length - 1] = entry;
-  } else {
-    doc.history.push(entry);
-    doc.history.sort((a, b) => a.date.localeCompare(b.date));
-  }
+  const inv = investmentTotals(m.today); // put in vs returns, for the Invest history chart
+  if (inv) Object.assign(entry, inv);
+  const same = doc.history.filter(h => h.date === m.today);
+  if (same.length === 1 && same[0].total === entry.total && same[0].invIn === entry.invIn && same[0].invRet === entry.invRet) return;
+  doc.history = doc.history.filter(h => h.date !== m.today).concat(entry).sort((a, b) => a.date.localeCompare(b.date));
   save();
 }
 
