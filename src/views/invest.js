@@ -47,7 +47,7 @@ function accountCard(m, a, v, bucket) {
     <div style="padding:0 18px 6px">
       <div class="between" style="align-items:flex-end"><div class="big">${money(value)}</div>
         ${usesLive && v.dayCents ? `<span class="delta ${v.dayCents >= 0 ? 'good' : 'bad'} small">${v.dayCents >= 0 ? ICON.up : ICON.down}${money(Math.abs(v.dayCents))}</span>` : ''}</div>
-      <div class="small muted">${usesLive ? (bucket ? `Live value · counts as ${esc(bucket.label)}` : 'Live value · not linked to a bucket, so not in net worth') : bal ? (bal.source === 'none' ? 'No balance yet — add holdings for a live value' : `From your last balance${bal.snapshotDate ? ` (${esc(fmtDate(bal.snapshotDate))})` : ''} + transfers since — add holdings for a live value`) : 'Add holdings to value this account'}</div>
+      <div class="small muted">${usesLive ? (bucket ? `Live value · counts as ${esc(bucket.label)}${bal?.carvedCents ? ` (${money(bal.cents)} after ${money(bal.carvedCents)} for ${esc(bal.carvedFor.map(id => m.bucketById[id]?.label).join(', '))})` : ''}` : 'Live value · not linked to a bucket, so not in net worth') : bal ? (bal.source === 'none' ? 'No balance yet — add holdings for a live value' : `From your last balance${bal.snapshotDate ? ` (${esc(fmtDate(bal.snapshotDate))})` : ''} + transfers since — add holdings for a live value`) : 'Add holdings to value this account'}</div>
       ${limitLine}
     </div>`;
   if (rows.length) {
@@ -187,12 +187,17 @@ function openAccountSheet(m, acctId) {
       <label class="field mb0"><span>${i === 0 ? '%' : ''}</span><input name="pc${i}" inputmode="decimal" value="${s.pct ?? ''}"></label>
     </div>`;
   const rowsN = Math.max(4, sleeves.length + 1);
+  // Buckets without an account of their own whose money could be sitting in this one.
+  const carveable = m.buckets.filter(b => b.kind !== 'expense' && b.kind !== 'pretax' && !b.account);
   openSheet({
     title: a ? a.name : 'New account', submitLabel: 'Save',
     body: `
       <label class="field"><span>Name</span><input name="name" maxlength="40" value="${esc(a?.name || '')}" placeholder="e.g. Fidelity"></label>
       <label class="field"><span>Counts as bucket</span><select name="bucket"><option value="">Not linked (not in net worth)</option>${m.buckets.filter(b => b.kind !== 'expense').map(b => `<option value="${esc(b.id)}" ${linked?.id === b.id ? 'selected' : ''} ${b.account && b.account !== a?.id ? 'disabled' : ''}>${esc(b.label)}${b.account && b.account !== a?.id ? ' (linked elsewhere)' : ''}</option>`).join('')}</select>
         <div class="hint">When linked and the account has holdings, its live value becomes that bucket’s balance.</div></label>
+      ${carveable.length ? `<div class="field"><span>This account also holds money for</span>
+        ${carveable.map(b => `<label class="check" style="margin:2px 0 6px"><input type="checkbox" name="held_${esc(b.id)}" ${b.heldIn && b.heldIn === a?.id ? 'checked' : ''}> ${esc(b.label)}</label>`).join('')}
+        <div class="hint">e.g. a travel fund kept in the same account. Its balance is taken out of this account’s bucket so nothing counts twice.</div></div>` : ''}
       <div class="group-h">Target mix (optional)</div>
       ${Array.from({ length: rowsN }, (_, i) => sleeveRow(sleeves[i] || { tickers: [], label: '', pct: '' }, i)).join('')}
       <p class="note">Several funds in one row share a target (e.g. “QQQ, QQQM”); new money goes to the last one listed. Percents should add to 100.</p>
@@ -202,7 +207,10 @@ function openAccountSheet(m, acctId) {
       $('#a-del', root)?.addEventListener('click', () => {
         if (!confirm(`Delete ${a.name} and its holdings?`)) return;
         doc.accounts = doc.accounts.filter(x => x !== a);
-        for (const b of doc.config.buckets) if (b.account === a.id) delete b.account;
+        for (const b of doc.config.buckets) {
+          if (b.account === a.id) delete b.account;
+          if (b.heldIn === a.id) delete b.heldIn;
+        }
         save(); sheet.close(); window.dispatchEvent(new Event('ledger:render'));
       });
     },
@@ -227,6 +235,12 @@ function openAccountSheet(m, acctId) {
       if (!a) doc.accounts.push(acct);
       for (const b of doc.config.buckets) if (b.account === acct.id) delete b.account;
       if (f.bucket.value) doc.config.buckets.find(b => b.id === f.bucket.value).account = acct.id;
+      for (const b of doc.config.buckets) {
+        const box = f['held_' + b.id];
+        if (!box) continue;
+        if (box.checked && b.id !== f.bucket.value) b.heldIn = acct.id;
+        else if (b.heldIn === acct.id) delete b.heldIn;
+      }
       save(); window.dispatchEvent(new Event('ledger:render'));
     },
   });
