@@ -51,7 +51,7 @@ export function goalsView(m) {
   // runway
   if (m.runway != null) {
     html += `<div class="tiles">
-      <div class="tile"><div class="tile-label">${ICON.shield.replace('<svg', '<svg width="14" height="14"')}Emergency runway</div><div class="tile-value">${m.runway.toFixed(1)} mo</div><div class="tile-note">cash ÷ ${money(m.burn, { whole: true })}/mo burn</div></div>
+      <div class="tile"><div class="tile-label">${ICON.shield.replace('<svg', '<svg width="14" height="14"')}Emergency runway</div><div class="tile-value">${m.runway.toFixed(1)} mo</div><div class="tile-note">${esc(m.buckets.filter(b => b.assetClass === 'cash' && b.kind !== 'revolving').map(b => b.label).join(' + '))} ÷ ${money(m.burn, { whole: true })}/mo</div></div>
       <div class="tile"><div class="tile-label">${ICON.coins.replace('<svg', '<svg width="14" height="14"')}Accessible</div><div class="tile-value">${money(m.nw.accessible, { whole: true })}</div><div class="tile-note">excludes retirement accounts</div></div>
     </div>`;
   }

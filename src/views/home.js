@@ -111,12 +111,22 @@ function tiles(m) {
     if (monthKey(c.date) === month && c.date <= m.today && isAsset(m.bucketById[c.bucketId])) saved += c.cents;
   }
   const owe = m.loans.filter(l => l.direction === 'i-owe').reduce((a, l) => a + l.balance, 0);
-  const runway = m.runway != null ? `${m.runway.toFixed(1)} months of expenses` : 'Emergency + instant cash';
+  const small = icon => icon.replace('<svg', '<svg width="14" height="14"');
+  // Each cash bucket gets its own tile (e.g. an emergency reserve and an instant-access account are different jobs).
+  const cashTiles = m.buckets.filter(b => b.assetClass === 'cash' && b.kind !== 'revolving' && m.balances[b.id]).map(b => {
+    const bal = m.balances[b.id].cents;
+    const note = Number.isInteger(b.targetCents) && b.targetCents > 0
+      ? `${Math.round((bal / b.targetCents) * 100)}% of ${money(b.targetCents, { whole: true })} target`
+      : (b.purpose || '').split('·')[0].trim();
+    return `<button class="tile" data-tab="goals" style="text-align:left"><div class="tile-label"><span class="dot" style="background:${bucketColor(b)}"></span>${esc(b.label)}</div><div class="tile-value">${money(bal, { whole: true })}</div><div class="tile-note">${esc(note)}</div></button>`;
+  });
+  const runwayFrom = m.buckets.filter(b => b.assetClass === 'cash' && b.kind !== 'revolving').map(b => b.label).join(' + ');
   return `<div class="tiles">
-    <button class="tile" data-tab="invest" style="text-align:left"><div class="tile-label">${ICON.invest.replace('<svg', '<svg width="14" height="14"')}Invested</div><div class="tile-value">${money(m.nw.invested, { whole: true })}</div><div class="tile-note">Roth, taxable & 401(k)</div></button>
-    <button class="tile" data-tab="goals" style="text-align:left"><div class="tile-label">${ICON.shield.replace('<svg', '<svg width="14" height="14"')}Cash</div><div class="tile-value">${money(m.nw.cash, { whole: true })}</div><div class="tile-note">${esc(runway)}</div></button>
-    <button class="tile" data-tab="plan" style="text-align:left"><div class="tile-label">${ICON.coins.replace('<svg', '<svg width="14" height="14"')}Saved in ${fmtMonth(month, { short: true, year: false })}</div><div class="tile-value">${money(saved, { whole: true })}</div><div class="tile-note">${planned ? `of ${money(planned, { whole: true })} planned` : 'Mark transfers in Plan'}</div></button>
-    <button class="tile" data-action="loans" style="text-align:left"><div class="tile-label">${ICON.bank.replace('<svg', '<svg width="14" height="14"')}You owe</div><div class="tile-value">${money(owe, { whole: true })}</div><div class="tile-note">${m.loans.length ? esc(m.loans.map(l => l.name).join(', ')) : 'No loans'}</div></button>
+    <button class="tile" data-tab="invest" style="text-align:left"><div class="tile-label">${small(ICON.invest)}Invested</div><div class="tile-value">${money(m.nw.invested, { whole: true })}</div><div class="tile-note">Roth, taxable & 401(k)</div></button>
+    <button class="tile" data-tab="plan" style="text-align:left"><div class="tile-label">${small(ICON.coins)}Saved in ${fmtMonth(month, { short: true, year: false })}</div><div class="tile-value">${money(saved, { whole: true })}</div><div class="tile-note">${planned ? `of ${money(planned, { whole: true })} planned` : 'Mark transfers in Plan'}</div></button>
+    ${cashTiles.join('')}
+    ${m.runway != null ? `<button class="tile" data-tab="goals" style="text-align:left"><div class="tile-label">${small(ICON.shield)}Runway</div><div class="tile-value">${m.runway.toFixed(1)} months</div><div class="tile-note">${esc(runwayFrom)} ÷ ${money(m.burn, { whole: true })}/mo</div></button>` : ''}
+    <button class="tile" data-action="loans" style="text-align:left"><div class="tile-label">${small(ICON.bank)}You owe</div><div class="tile-value">${money(owe, { whole: true })}</div><div class="tile-note">${m.loans.length ? esc(m.loans.map(l => l.name).join(', ')) : 'No loans'}</div></button>
   </div>`;
 }
 
