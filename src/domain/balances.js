@@ -39,12 +39,13 @@ function latestSnapshot(snapshots, bucketId, asOf) {
  */
 export function bucketBalances({ config, snapshots = [], contributions = [], transactions = [], accountValues = {}, asOf }) {
   const out = {};
+  const liveBuckets = [];
   const periods = config.profile?.payPeriodsPerYear || 24;
   for (const b of config.buckets) {
     if (!isAsset(b)) continue;
     const live = b.account ? accountValues[b.account] : null;
     if (live && live.hasPositions) {
-      out[b.id] = { cents: live.cents, source: 'live', priced: live.priced };
+      liveBuckets.push(b);
       continue;
     }
     const snap = latestSnapshot(snapshots, b.id, asOf);
@@ -75,6 +76,15 @@ export function bucketBalances({ config, snapshots = [], contributions = [], tra
       snapshotCents: snap ? snap.cents : null,
       addedCents: added + payroll - spent,
     };
+  }
+  // A live account can also hold money that belongs to other buckets (e.g. a travel fund kept in
+  // the same brokerage account). Those buckets keep their own ledger balance, and the account's
+  // bucket gets what's left, so nothing is counted twice.
+  for (const b of liveBuckets) {
+    const live = accountValues[b.account];
+    const inside = config.buckets.filter(x => x.heldIn === b.account && x.id !== b.id && out[x.id]);
+    const carved = inside.reduce((a, x) => a + out[x.id].cents, 0);
+    out[b.id] = { cents: live.cents - carved, source: 'live', priced: live.priced, carvedCents: carved, carvedFor: inside.map(x => x.id) };
   }
   return out;
 }
