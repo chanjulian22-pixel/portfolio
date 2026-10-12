@@ -78,6 +78,7 @@ export function investView(m) {
       ${divYear ? `<span>· ${money(divYear)} dividends in ${year}</span>` : ''}
       <span class="muted small">${prices.refreshing ? 'Updating prices…' : m.quoteTime ? `Prices as of ${new Date(m.quoteTime * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}${prices.lastRefresh ? ` · ${timeAgo(prices.lastRefresh)}` : ''}` : ''}</span></div>
   </section>`;
+  html += accountValuesCard(m);
   if (knownRets.length) {
     const byAcct = doc.accounts.filter(a => a.holdings.length).map(a => ({ a, r: returnsFor(a, m.today) })).filter(x => x.r.known);
     html += `<div class="card">
@@ -168,6 +169,38 @@ function accountCard(m, a, v, bucket) {
     </div>`;
   }
   return html + '</div>';
+}
+
+/**
+ * One line per investment account over time — from the daily history the app records (plus the
+ * balances imported from your spreadsheet) and today's live value. Colors follow each account's bucket.
+ */
+function accountValuesCard(m) {
+  const series = m.buckets.filter(b => b.account && doc.accounts.some(a => a.id === b.account)).map(b => {
+    const acct = doc.accounts.find(a => a.id === b.account);
+    const points = doc.history.filter(h => h.date < m.today && Number.isInteger(h.byBucket?.[b.id])).map(h => ({ x: h.date, y: h.byBucket[b.id] }));
+    const now = m.balances[b.id]?.cents;
+    if (Number.isInteger(now)) points.push({ x: m.today, y: now });
+    return { key: b.id, label: acct.name, color: bucketColor(b), points, endDot: m.today, now: now ?? 0 };
+  }).filter(s => s.points.some(p => p.y > 0));
+  if (!series.length) return '';
+  const days = new Set(series.flatMap(s => s.points.map(p => p.x))).size;
+  const total = series.reduce((a, s) => a + s.now, 0);
+  return `<div class="card">
+    <div class="card-h"><h2>Account values</h2><span class="small muted">${money(total, { whole: true })} total</span></div>
+    ${days >= 2 ? chart({
+      type: 'lines', height: 180, yZero: true, label: 'Value of each investment account over time', series,
+      tooltip: ({ x, values }) => `<div>${esc(fmtDate(x, { year: true }))}</div>` + [...values].sort((p, q) => q.y - p.y).map(v =>
+        `<div class="k"><i style="background:${v.color}"></i><b style="display:inline">${esc(money(v.y, { whole: true }))}</b>&nbsp;<span style="opacity:.7">${esc(v.label)}</span></div>`).join(''),
+    }) : '<p class="note" style="margin:0 0 4px">The chart fills in as the app records one point a day.</p>'}
+    <div class="legend">${[...series].sort((p, q) => q.now - p.now).map(s => {
+      const first = s.points[0];
+      const change = first && first.x < m.today ? s.now - first.y : null;
+      return `<div class="legend-row"><span class="sw" style="background:${s.color};height:3px;border-radius:2px;width:14px"></span>
+        <span class="lbl">${esc(s.label)}${change != null ? `<small>${money(change, { whole: true, sign: true })} since ${esc(fmtDate(first.x, { year: true }))}</small>` : ''}</span>
+        <span class="val">${money(s.now)}<small>${pct(total ? s.now / total : 0, 0)} of total</small></span></div>`;
+    }).join('')}</div>
+  </div>`;
 }
 
 /** Part-to-whole: what you put in, and what it has earned on top (a loss shows as a gap). */

@@ -71,11 +71,12 @@ function renderLines(el, spec, W) {
   const Y = v => padT + (1 - (v - lo) / (hi - lo || 1)) * (H - padT - padB);
 
   let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
-  // grid
+  // grid (tick labels are drawn after the data, with a surface halo, so lines never cut through them)
+  let tickLabels = '';
   for (const v of ticks) {
     const y = Y(v);
     svg += `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--grid)" stroke-width="1"/>`;
-    svg += `<text x="0" y="${y - 4}" font-size="10.5" fill="var(--muted)" class="num">${esc(compact(v * 1, { mask: true }))}</text>`;
+    tickLabels += `<text x="0" y="${y - 4}" font-size="10.5" fill="var(--muted)" class="num" stroke="var(--surface)" stroke-width="3" stroke-linejoin="round" paint-order="stroke">${esc(compact(v * 1, { mask: true }))}</text>`;
   }
   // x labels: first, last, and evenly spaced months between
   const labelCount = Math.max(2, Math.min(5, Math.floor(W / 80)));
@@ -107,11 +108,10 @@ function renderLines(el, spec, W) {
     svg += `<path d="${line}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"${s.dashed ? ' stroke-dasharray="5 5"' : ''}/>`;
     if (pts.length === 1) svg += `<circle cx="${X(pts[0].x)}" cy="${Y(pts[0].top)}" r="4" fill="${s.color}" stroke="var(--surface)" stroke-width="2"/>`;
   }
-  // end dot on the emphasised series
-  const endS = geom.find(g => g.s.endDot);
-  if (endS) {
-    const p = endS.pts.find(q => q.x === endS.s.endDot) || endS.pts[endS.pts.length - 1];
-    svg += `<circle cx="${X(p.x)}" cy="${Y(p.top)}" r="4.5" fill="${endS.s.color}" stroke="var(--surface)" stroke-width="2"/>`;
+  // end dots (2px surface ring so they stay legible where lines cross)
+  for (const g of geom.filter(g => g.s.endDot && g.pts.length > 1)) {
+    const p = g.pts.find(q => q.x === g.s.endDot) || g.pts[g.pts.length - 1];
+    svg += `<circle cx="${X(p.x)}" cy="${Y(p.top)}" r="4.5" fill="${g.s.color}" stroke="var(--surface)" stroke-width="2"/>`;
   }
   // milestone markers
   for (const mk of spec.marks || []) {
@@ -119,6 +119,7 @@ function renderLines(el, spec, W) {
     const near = top.reduce((a, b) => Math.abs(t(b.x) - t(mk.x)) < Math.abs(t(a.x) - t(mk.x)) ? b : a, top[0]);
     svg += `<circle cx="${X(mk.x)}" cy="${Y(near.top)}" r="4" fill="var(--surface)" stroke="var(--ink)" stroke-width="2"/>`;
   }
+  svg += tickLabels;
   svg += `<g class="hover" opacity="0"><line class="cx" y1="${padT}" y2="${H - padB}" stroke="var(--ink-2)" stroke-width="1"/>`;
   for (const g of geom) svg += `<circle class="hd" r="4.5" fill="${g.s.color}" stroke="var(--surface)" stroke-width="2"/>`;
   svg += `</g></svg><div class="tip"></div>`;
