@@ -33,14 +33,18 @@ export function applyBuys({ holdings, cash = 0, buys, sentCents }) {
     spent += b.costCents;
   }
   const leftoverCents = sentCents - spent;
-  return { holdings: next, cash: Math.max(0, cash + leftoverCents), leftoverCents, spentCents: spent };
+  // Spending a few cents more than the transfer is normal (spare cash already in the account that
+  // Ledger may not know about), so cash floors at zero rather than going negative.
+  const newCash = Math.max(0, cash + leftoverCents);
+  return { holdings: next, cash: newCash, leftoverCents, cashDeltaCents: newCash - cash, spentCents: spent };
 }
 
-/** Reverse applyBuys (when a transfer is un-marked as sent). */
-export function undoBuys({ holdings, cash = 0, buys, leftoverCents = 0 }) {
+/** Reverse applyBuys (when a transfer is un-marked as sent). Pass the cashDeltaCents applyBuys returned. */
+export function undoBuys({ holdings, cash = 0, buys, cashDeltaCents, leftoverCents = 0 }) {
   let next = holdings;
   for (const b of buys) next = addPosition(next, b.ticker, -b.shares, -b.costCents);
-  return { holdings: next.filter(h => h.shares > 1e-9), cash: Math.max(0, cash - leftoverCents) };
+  const delta = Number.isInteger(cashDeltaCents) ? cashDeltaCents : leftoverCents;
+  return { holdings: next.filter(h => h.shares > 1e-9), cash: Math.max(0, cash - delta) };
 }
 
 /** A dividend: reinvested → more shares (and cost basis); paid out → more cash. */

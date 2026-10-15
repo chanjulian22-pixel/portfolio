@@ -143,6 +143,19 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ---------------------------------------------------------------- start
+// Transfers marked as sent before their payday used to be dated on the payday. Date them when
+// they were actually marked, so balances and the projection see that money now.
+(function redateEarlyTransfers() {
+  const today = todayISO();
+  let changed = false;
+  for (const c of doc.contributions) {
+    if (!c.paycheck || c.date <= today || !c.at) continue;
+    const d = new Date(c.at);
+    const marked = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (marked < c.date) { c.date = marked; changed = true; }
+  }
+  if (changed) save();
+})();
 applyTheme();
 render();
 if (doc.migratedFromV1) {

@@ -51,7 +51,7 @@ export function removeContribution(c) {
     const buys = doc.purchases.filter(p => c.buyIds.includes(p.id));
     const a = doc.accounts.find(x => x.id === buys[0]?.accountId);
     if (a) {
-      const r = undoBuys({ holdings: a.holdings, cash: a.cash, buys, leftoverCents: c.leftoverCents || 0 });
+      const r = undoBuys({ holdings: a.holdings, cash: a.cash, buys, cashDeltaCents: c.cashDeltaCents, leftoverCents: c.leftoverCents || 0 });
       a.holdings = r.holdings;
       a.cash = r.cash;
     }
@@ -353,6 +353,7 @@ export function openBuySheet(m, acctId, contribId = null) {
         <datalist id="buy-tickers">${tickers.map(t => `<option value="${esc(t)}">`).join('')}</datalist>
       </div>
       <div class="small ink2" id="buy-sum" style="margin:0 4px 12px"></div>
+      <label class="field"><span>Trade date</span><input name="tradeDate" type="date" max="${m.today}" value="${esc(c && c.date < m.today ? c.date : m.today)}"></label>
       <p class="err" id="buy-err"></p>
       ${c ? '<button type="button" class="btn block" id="buy-later">Log it later</button><p class="note" style="text-align:center">Until you log it, the transfer counts as cash in the account.</p>' : ''}`,
     onMount: (root, sheet) => {
@@ -383,17 +384,21 @@ export function openBuySheet(m, acctId, contribId = null) {
         buys.push({ ticker: t, shares: sh, costCents: co });
       }
       if (!buys.length) return err('Enter at least one fund — or tap “Log it later”.');
-      const spent = buys.reduce((s, b) => s + b.costCents, 0);
-      if (spent - sent > a.cash) return err(`That’s ${money(spent - sent - a.cash, { mask: false })} more than the transfer plus the account’s cash.`);
+      const tradeDate = f.tradeDate.value;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(tradeDate) || tradeDate > m.today) return err('Pick the trade date from the receipt.');
+      // A few cents over the transfer is fine — it came from spare cash already in the account.
       const r = applyBuys({ holdings: a.holdings, cash: a.cash, buys, sentCents: sent });
       a.holdings = r.holdings;
       a.cash = r.cash;
       const ids = buys.map(b => {
         const id = newId('b');
-        doc.purchases.push({ id, date: m.today, accountId: a.id, ticker: b.ticker, shares: b.shares, costCents: b.costCents, ...(c ? { contributionId: c.id } : {}) });
+        doc.purchases.push({ id, date: tradeDate, accountId: a.id, ticker: b.ticker, shares: b.shares, costCents: b.costCents, ...(c ? { contributionId: c.id } : {}) });
         return id;
       });
-      if (c) { c.pendingBuy = false; c.buyIds = ids; c.leftoverCents = r.leftoverCents; }
+      if (c) {
+        Object.assign(c, { pendingBuy: false, buyIds: ids, leftoverCents: r.leftoverCents, cashDeltaCents: r.cashDeltaCents });
+        if (tradeDate < c.date) c.date = tradeDate; // the money had clearly moved by the trade date
+      }
       save();
       toast(`Logged ${buys.map(b => `${b.ticker} +${+b.shares.toFixed(4)}`).join(', ')}`);
       rerender();
@@ -484,10 +489,19 @@ function rebalanceBox(m, a, positions, bucket) {
   let amount = ui.rebal[a.id];
   let hint = '';
   if (!Number.isInteger(amount) && bucket) {
-    // Default: what the plan sends this bucket over the next two paychecks.
+    // Default: what the plan sends this bucket over the next two paychecks that haven't been sent yet.
     amount = 0;
-    for (const pd of m.upcoming.slice(0, 2)) amount += (m.planFor(pd).lines || []).find(l => l.bucketId === bucket.id)?.cents || 0;
-    hint = amount ? 'next two paychecks' : '';
+    let counted = 0;
+    for (const pd of m.upcoming) {
+      if (counted === 2) break;
+      const plan = m.planFor(pd);
+      if (plan.done[bucket.id] > 0) continue;
+      const cents = (plan.lines || []).find(l => l.bucketId === bucket.id)?.cents || 0;
+      if (!cents) continue;
+      amount += cents;
+      counted++;
+    }
+    hint = amount ? 'your next two transfers here' : '';
   }
   amount = amount || 0;
   const r = amount > 0 ? rebalance({ positions, sleeves: a.targets, newCashCents: amount }) : null;

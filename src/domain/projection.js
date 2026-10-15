@@ -15,8 +15,10 @@ const monthlyRate = r => (r > 0 ? Math.pow(1 + r, 1 / 12) - 1 : 0);
  * @param {string} p.endDate
  * @param {Record<string, number>} p.balances cents per asset bucket
  * @param {Record<string, number>} [p.ytd] contributions so far this year for limited / pre-tax buckets
+ * @param {Record<string, Record<string, number>>} [p.sentAhead] transfers already made for upcoming
+ *   paydays ({ payday: { bucketId: cents } }). That money is already in `balances`, so it isn't added again.
  */
-export function project({ config, startDate, endDate, balances, ytd = {} }) {
+export function project({ config, startDate, endDate, balances, ytd = {}, sentAhead = {} }) {
   const buckets = config.buckets;
   const assets = buckets.filter(isAsset);
   const periods = config.profile?.payPeriodsPerYear || 24;
@@ -106,10 +108,11 @@ export function project({ config, startDate, endDate, balances, ytd = {} }) {
       }
       for (const line of result.lines) {
         if (!(line.bucketId in bal)) continue; // expenses leave the system
-        bal[line.bucketId] += line.cents;
-        principal[line.bucketId] += line.cents;
+        const add = Math.max(0, line.cents - (sentAhead[p.date]?.[line.bucketId] || 0)); // already counted if sent early
+        bal[line.bucketId] += add;
+        principal[line.bucketId] += add;
         const b = buckets.find(x => x.id === line.bucketId);
-        if (b.kind === 'limited') ytdNow[b.id] = (ytdNow[b.id] || 0) + line.cents;
+        if (b.kind === 'limited') ytdNow[b.id] = (ytdNow[b.id] || 0) + add;
       }
       // Payroll 401(k): deferral up to the annual limit, match per period on what was actually deferred.
       const k401 = assets.find(b => b.kind === 'pretax');

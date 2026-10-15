@@ -37,11 +37,19 @@ function build(today) {
   const hasIncome = config.incomes.some(i => i.annualGrossCents > 0);
   const hasData = hasIncome || doc.snapshots.length > 0 || doc.transactions.length > 0 || Object.values(accountValues).some(a => a.hasPositions);
 
+  // Transfers already made for paydays that haven't happened yet (e.g. buying early on a market dip).
+  // They're in today's balances, so the projection mustn't add them again on the payday.
+  const sentAhead = {};
+  for (const c of doc.contributions) {
+    if (!c.paycheck || c.paycheck <= today || c.date > today) continue;
+    (sentAhead[c.paycheck] ||= {})[c.bucketId] = (sentAhead[c.paycheck][c.bucketId] || 0) + c.cents;
+  }
+
   const projections = {};
   const projection = months => {
     if (!hasIncome) return null;
     if (!projections[months]) {
-      projections[months] = project({ config, startDate: today, endDate: addMonths(today, months), balances: centsOf(balances), ytd });
+      projections[months] = project({ config, startDate: today, endDate: addMonths(today, months), balances: centsOf(balances), ytd, sentAhead });
     }
     return projections[months];
   };

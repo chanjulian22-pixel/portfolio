@@ -1,6 +1,6 @@
 import { doc, ui, saveUi, save, newId } from '../store.js';
 import { stackBar, meter } from '../charts.js';
-import { money, pct, fmtDate, fmtMonth, relDays, esc, ICON, openSheet, toast, $ } from '../ui.js';
+import { money, pct, fmtDate, fmtMonth, relDays, esc, ICON, openSheet, toast, todayISO, $ } from '../ui.js';
 import { daysBetween, yearOf } from '../domain/dates.js';
 import { taxYear } from '../domain/taxdata.js';
 import { parseCents } from '../domain/money.js';
@@ -139,9 +139,14 @@ function taxCard(pay) {
   </div>`;
 }
 
-/** A transfer marked as sent. Money headed to an investment account waits there as cash until you log the buy. */
-function addSent(date, bucketId, cents) {
-  const c = { id: newId('c'), bucketId, date, cents, paycheck: date, at: Date.now() };
+/**
+ * A transfer marked as sent, filed under its paycheck. Sent before payday (e.g. buying early on a dip)?
+ * It's dated today — when the money actually moved. Money headed to an investment account waits
+ * there as cash until you log the buy.
+ */
+function addSent(paycheck, bucketId, cents) {
+  const today = todayISO();
+  const c = { id: newId('c'), bucketId, date: paycheck > today ? today : paycheck, cents, paycheck, at: Date.now() };
   if (liveAccountFor(bucketId)) c.pendingBuy = true;
   doc.contributions.push(c);
   return c;
