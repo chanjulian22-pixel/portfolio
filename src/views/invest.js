@@ -487,11 +487,19 @@ export function openBuySheet(m, acctId, contribId = null) {
       const f = sheet.form.elements;
       const sum = () => {
         let spent = 0;
-        for (let i = 0; i < rows.length; i++) { const v = parseCents(f['co_' + i].value || '0'); if (Number.isFinite(v)) spent += v; }
+        const after = {};
+        for (let i = 0; i < rows.length; i++) {
+          const v = parseCents(f['co_' + i].value || '0');
+          if (Number.isFinite(v)) spent += v;
+          const t = normTicker(f['tk_' + i].value), sh = parseShares(f['sh_' + i].value);
+          if (t && sh > 0) after[t] = (after[t] ?? (a.holdings.find(h => h.ticker === t)?.shares || 0)) + sh;
+        }
         const left = sent - spent;
-        $('#buy-sum', root).textContent = c
+        $('#buy-sum', root).innerHTML = esc(c
           ? `Spent ${money(spent, { mask: false })} of ${money(sent, { mask: false })}${left > 0 ? ` · ${money(left, { mask: false })} stays as cash` : left < 0 ? ` · ${money(-left, { mask: false })} comes from cash already in the account` : ''}`
-          : `Spent ${money(spent, { mask: false })} from the account’s cash`;
+          : `Spent ${money(spent, { mask: false })} from the account’s cash`)
+          // Catch double counts before saving: the totals should match your brokerage's quantity after the trade.
+          + (Object.keys(after).length ? `<div class="mt8">After saving: <strong>${esc(Object.entries(after).map(([t, n]) => `${t} ${+n.toFixed(4)} sh`).join(' · '))}</strong> — should match your brokerage.</div>` : '');
       };
       root.addEventListener('input', sum);
       sum();
