@@ -4,7 +4,7 @@ import { money, shares, pct, fmtDate, fmtMonth, timeAgo, esc, ICON, openSheet, t
 import { priceOf, prices } from '../prices.js';
 import { rebalance, sleeveWeights } from '../domain/rebalance.js';
 import { dividendsInYear, dividendCheckMonth, divFreq, fundsDue, DEFAULT_DIV_FREQ } from '../domain/dividends.js';
-import { applyBuys, undoBuys, applyDividend, accountReturns } from '../domain/holdings.js';
+import { applyBuys, undoBuys, applyDividend, undoDividend, accountReturns } from '../domain/holdings.js';
 import { parseCents } from '../domain/money.js';
 import { bucketColor, notice } from './common.js';
 
@@ -148,7 +148,7 @@ function accountCard(m, a, v, bucket) {
       <span class="row-main"><span class="row-title" style="display:block">Waiting to be logged</span><span class="row-sub" style="display:block">${esc(fmtDate(c.date))} transfer to ${esc(m.bucketById[c.bucketId]?.label)}</span></span>
       <span class="row-end"><span class="v" style="display:block">${money(c.cents)}</span><span class="s" style="display:block;color:var(--ink)">Log buy ›</span></span>
     </button>`).join('')}
-    ${divRow(m, a)}
+    ${historyRow(m, a)}
     </div>`;
   }
   html += rows.length
@@ -302,15 +302,142 @@ function openCostSheet(m, acctId) {
   });
 }
 
-function divRow(m, a) {
-  const list = (doc.dividends || []).filter(d => d.accountId === a.id).sort((x, y) => y.date.localeCompare(x.date));
-  if (!list.length) return '';
+// ---------------------------------------------------------------- history
+/**
+ * Buys grouped by receipt. Purchases logged before batches existed are grouped by their transfer,
+ * or stand alone; their cash change comes from the transfer record when there is one.
+ */
+function buyBatches(acctId) {
+  const groups = new Map();
+  for (const p of doc.purchases.filter(x => x.accountId === acctId)) {
+    const key = p.batch || (p.contributionId ? `c:${p.contributionId}` : `p:${p.id}`);
+    if (!groups.has(key)) groups.set(key, { key, date: p.date, buys: [], contributionId: p.contributionId || null, cashDelta: p.batchCashDeltaCents });
+    groups.get(key).buys.push(p);
+  }
+  for (const g of groups.values()) {
+    if (!Number.isInteger(g.cashDelta)) {
+      const c = g.contributionId && doc.contributions.find(x => x.id === g.contributionId);
+      g.cashDelta = c ? (Number.isInteger(c.cashDeltaCents) ? c.cashDeltaCents : c.leftoverCents || 0) : 0;
+    }
+  }
+  return [...groups.values()];
+}
+
+/** Delete one logged receipt: its shares, cost basis and cash effect all come back out. */
+function deleteBatch(acctId, key) {
+  const a = doc.accounts.find(x => x.id === acctId);
+  const g = buyBatches(acctId).find(x => x.key === key);
+  if (!a || !g) return;
+  const what = g.buys.map(b => `${b.ticker} ${+b.shares.toFixed(4)} sh`).join(', ');
+  if (!confirm(`Delete this buy (${what})? Its shares and cost come out of ${a.name}.`)) return;
+  const r = undoBuys({ holdings: a.holdings, cash: a.cash, buys: g.buys, cashDeltaCents: g.cashDelta });
+  a.holdings = r.holdings;
+  a.cash = r.cash;
+  const ids = new Set(g.buys.map(b => b.id));
+  doc.purchases = doc.purchases.filter(p => !ids.has(p.id));
+  const c = g.contributionId && doc.contributions.find(x => x.id === g.contributionId);
+  if (c) {
+    c.buyIds = (c.buyIds || []).filter(id => !ids.has(id));
+    if (!c.buyIds.length) {
+      delete c.buyIds; delete c.leftoverCents; delete c.cashDeltaCents;
+      if (confirm(`Also un-mark the ${fmtDate(c.paycheck || c.date)} transfer of ${money(c.cents, { mask: false })} as sent?\n\nOK if it was a duplicate. Cancel keeps it as sent, waiting for you to log the buy again.`)) {
+        doc.contributions = doc.contributions.filter(x => x !== c);
+      } else {
+        c.pendingBuy = true;
+      }
+    }
+  }
+  save();
+  toast('Buy deleted');
+  rerender();
+}
+
+function deleteDividend(id) {
+  const d = doc.dividends.find(x => x.id === id);
+  if (!d || !confirm(`Delete the ${money(d.cents, { mask: false })} ${d.ticker || ''} dividend? ${d.shares ? `Its ${+Number(d.shares).toFixed(4)} reinvested shares come out too.` : 'Its cash comes out too.'}`)) return;
+  const a = doc.accounts.find(x => x.id === d.accountId);
+  if (a && d.ticker) {
+    const r = undoDividend({ holdings: a.holdings, cash: a.cash, ticker: d.ticker, cents: d.cents, shares: d.shares || 0 });
+    a.holdings = r.holdings;
+    a.cash = r.cash;
+  }
+  doc.dividends = doc.dividends.filter(x => x !== d);
+  save();
+  toast('Dividend deleted');
+  rerender();
+}
+
+function historyRow(m, a) {
+  const buys = buyBatches(a.id).length;
+  const divs = (doc.dividends || []).filter(d => d.accountId === a.id);
+  const pending = pendingBuys(a.id).length;
+  if (!buys && !divs.length && !pending) return '';
+  const last = [...doc.purchases.filter(p => p.accountId === a.id).map(p => p.date), ...divs.map(d => d.date)].sort().pop();
   const year = Number(m.today.slice(0, 4));
-  return `<button class="row" data-action="account-dividends" data-acct="${esc(a.id)}">
-    <span class="row-main"><span class="row-title" style="display:block">Dividends</span>
-      <span class="row-sub" style="display:block">Last ${money(list[0].cents)} on ${esc(fmtDate(list[0].date))}${list[0].ticker ? ` · ${esc(list[0].ticker)}` : ''}</span></span>
-    <span class="row-end"><span class="v good" style="display:block">${money(dividendsInYear(list, year))}</span><span class="s" style="display:block">in ${year}</span></span>
+  const divYear = dividendsInYear(divs, year);
+  const parts = [buys && `${buys} buy${buys > 1 ? 's' : ''}`, divs.length && `${divs.length} dividend${divs.length > 1 ? 's' : ''}`, pending && `${pending} waiting`].filter(Boolean);
+  return `<button class="row" data-action="account-history" data-acct="${esc(a.id)}">
+    <span class="row-main"><span class="row-title" style="display:block">History</span>
+      <span class="row-sub" style="display:block">${esc(parts.join(' · '))}${last ? ` · last ${esc(fmtDate(last))}` : ''}</span></span>
+    <span class="row-end">${divYear ? `<span class="v good" style="display:block">${money(divYear)}</span><span class="s" style="display:block">dividends ${year}</span>` : '<span class="chev">' + ICON.chevR + '</span>'}</span>
   </button>`;
+}
+
+/** Everything that changed this account's shares or cash, newest first — each one deletable. */
+function openHistorySheet(m, acctId) {
+  const a = doc.accounts.find(x => x.id === acctId);
+  if (!a) return;
+  const body = () => {
+    const items = [
+      ...buyBatches(acctId).map(g => ({ kind: 'buy', date: g.date, g })),
+      ...(doc.dividends || []).filter(d => d.accountId === acctId).map(d => ({ kind: 'div', date: d.date, d })),
+      ...pendingBuys(acctId).map(c => ({ kind: 'wait', date: c.date, c })),
+    ].sort((x, y) => y.date.localeCompare(x.date));
+    const del = (attrs) => `<button type="button" class="icon-btn" ${attrs} aria-label="Delete" style="width:32px;height:32px;color:var(--muted)">${ICON.trash}</button>`;
+    const row = it => {
+      if (it.kind === 'buy') {
+        const g = it.g;
+        const c = g.contributionId && doc.contributions.find(x => x.id === g.contributionId);
+        const cost = g.buys.reduce((s, b) => s + b.costCents, 0);
+        return `<div class="row"><span class="avatar">🛒</span>
+          <span class="row-main"><span class="row-title" style="display:block">Bought ${esc(g.buys.map(b => `${b.ticker} ${+b.shares.toFixed(4)}`).join(' · '))}</span>
+            <span class="row-sub" style="display:block">${esc(fmtDate(g.date, { year: true }))}${c ? ` · ${esc(fmtDate(c.paycheck || c.date))} paycheck transfer` : ' · from cash in the account'}</span></span>
+          <span class="row-end"><span class="v">${money(cost, { mask: false })}</span></span>${del(`data-del-batch="${esc(g.key)}"`)}</div>`;
+      }
+      if (it.kind === 'div') {
+        const d = it.d;
+        return `<div class="row"><span class="avatar">🌱</span>
+          <span class="row-main"><span class="row-title" style="display:block">Dividend${d.ticker ? ` · ${esc(d.ticker)}` : ''}</span>
+            <span class="row-sub" style="display:block">${esc(fmtDate(d.date, { year: true }))}${d.shares ? ` · +${+Number(d.shares).toFixed(4)} sh reinvested` : ' · paid as cash'}</span></span>
+          <span class="row-end"><span class="v good">${money(d.cents, { mask: false })}</span></span>${del(`data-del-div="${esc(d.id)}"`)}</div>`;
+      }
+      const c = it.c;
+      return `<div class="row"><span class="avatar">⏳</span>
+        <span class="row-main"><span class="row-title" style="display:block">Transfer waiting to be logged</span>
+          <span class="row-sub" style="display:block">${esc(fmtDate(c.date, { year: true }))} · ${esc(fmtDate(c.paycheck || c.date))} paycheck</span></span>
+        <span class="row-end"><span class="v">${money(c.cents, { mask: false })}</span></span>${del(`data-del-wait="${esc(c.id)}"`)}</div>`;
+    };
+    return `
+      <div class="group-h">Shares now — compare with your brokerage</div>
+      <div class="card">${a.holdings.map(h => `<div class="between" style="padding:4px 0"><span>${esc(h.ticker)}</span><span class="num">${shares(h.shares)} sh</span></div>`).join('')}
+        <div class="between" style="padding:4px 0"><span class="muted">Cash</span><span class="num">${money(a.cash || 0)}</span></div>
+        <p class="note" style="margin:8px 0 0">If a number here is higher than your brokerage shows, look below for a buy or dividend logged twice and delete the extra one.</p></div>
+      <div class="group-h">History</div>
+      <div class="card flush"><div class="rows" style="margin:0">${items.map(row).join('') || '<div class="empty">Nothing logged yet.</div>'}</div></div>
+      <p class="note mt12">Deleting a buy or dividend takes its shares, cost basis and cash back out. Deleting a waiting transfer un-marks it as sent.</p>`;
+  };
+  openSheet({
+    title: `${a.name} history`, body: body(), live: body,
+    onMount: root => root.addEventListener('click', e => {
+      const b = e.target.closest('[data-del-batch]'), d = e.target.closest('[data-del-div]'), w = e.target.closest('[data-del-wait]');
+      if (b) deleteBatch(acctId, b.dataset.delBatch);
+      else if (d) deleteDividend(d.dataset.delDiv);
+      else if (w) {
+        const c = doc.contributions.find(x => x.id === w.dataset.delWait);
+        if (c && confirm(`Un-mark the ${money(c.cents, { mask: false })} transfer as sent?`)) { removeContribution(c); save(); toast('Transfer removed'); rerender(); }
+      }
+    }),
+  });
 }
 
 // ---------------------------------------------------------------- log a buy
@@ -390,9 +517,11 @@ export function openBuySheet(m, acctId, contribId = null) {
       const r = applyBuys({ holdings: a.holdings, cash: a.cash, buys, sentCents: sent });
       a.holdings = r.holdings;
       a.cash = r.cash;
+      // One receipt = one batch, so History can delete it as a unit and restore cash exactly.
+      const batch = newId('k');
       const ids = buys.map(b => {
         const id = newId('b');
-        doc.purchases.push({ id, date: tradeDate, accountId: a.id, ticker: b.ticker, shares: b.shares, costCents: b.costCents, ...(c ? { contributionId: c.id } : {}) });
+        doc.purchases.push({ id, batch, batchCashDeltaCents: r.cashDeltaCents, date: tradeDate, accountId: a.id, ticker: b.ticker, shares: b.shares, costCents: b.costCents, ...(c ? { contributionId: c.id } : {}) });
         return id;
       });
       if (c) {
@@ -457,30 +586,6 @@ export function openDividendSheet(m, { month = null, acctId = null } = {}) {
       toast(`Logged ${money(entries.reduce((s, e) => s + e.cents, 0), { mask: false })} in dividends`);
       rerender();
     },
-  });
-}
-
-function openDividendsSheet(m, acctId) {
-  const a = doc.accounts.find(x => x.id === acctId);
-  const body = () => {
-    const list = (doc.dividends || []).filter(d => d.accountId === acctId).sort((x, y) => y.date.localeCompare(x.date));
-    const years = [...new Set(list.map(d => d.date.slice(0, 4)))];
-    return `${years.map(y => `<div class="group-h between"><span>${y}</span><span class="num">${money(dividendsInYear(list, Number(y)), { mask: false })}</span></div>
-      <div class="card flush"><div class="rows plain" style="margin:0">${list.filter(d => d.date.startsWith(y)).map(d => `<div class="row">
-        <span class="row-main"><span class="row-title" style="display:block">${esc(d.ticker || (d.tickers || []).join(', ') || 'Dividend')}</span><span class="row-sub" style="display:block">${esc(fmtDate(d.date, { year: true }))}${d.shares ? ` · +${+Number(d.shares).toFixed(4)} sh reinvested` : ' · cash'}</span></span>
-        <span class="row-end"><span class="v good">${money(d.cents, { mask: false })}</span></span>
-        <button type="button" class="icon-btn" data-del-div="${esc(d.id)}" aria-label="Delete" style="width:32px;height:32px;color:var(--muted)">${ICON.x}</button></div>`).join('')}</div></div>`).join('') || '<div class="empty">No dividends logged yet.</div>'}
-      <p class="note mt12">Deleting a record here doesn’t change your share count — fix that on the fund if needed.</p>`;
-  };
-  openSheet({
-    title: `${a.name} dividends`, body: body(), live: body,
-    onMount: root => root.addEventListener('click', e => {
-      const d = e.target.closest('[data-del-div]');
-      if (!d || !confirm('Delete this dividend record?')) return;
-      doc.dividends = doc.dividends.filter(x => x.id !== d.dataset.delDiv);
-      save();
-      rerender();
-    }),
   });
 }
 
@@ -672,7 +777,7 @@ export const investActions = {
   'log-buy': (el, m) => openBuySheet(m, el.dataset.acct, el.dataset.contrib || null),
   'log-dividend': (el, m) => openDividendSheet(m, { acctId: el.dataset.acct }),
   'dividend-check': (el, m) => openDividendSheet(m, { month: el.dataset.month }),
-  'account-dividends': (el, m) => openDividendsSheet(m, el.dataset.acct),
+  'account-history': (el, m) => openHistorySheet(m, el.dataset.acct),
   'add-holding': (el, m) => openHoldingSheet(m, el.dataset.acct, null),
   'edit-holding': (el, m) => openHoldingSheet(m, el.dataset.acct, el.dataset.ticker),
   'edit-cash': el => openCashSheet(el.dataset.acct),

@@ -53,6 +53,14 @@ export function applyDividend({ holdings, cash = 0, ticker, cents, shares = 0 })
   return { holdings: holdings.map(h => ({ ...h })), cash: cash + cents };
 }
 
+/** Reverse applyDividend (deleting a dividend logged by mistake or twice). */
+export function undoDividend({ holdings, cash = 0, ticker, cents, shares = 0 }) {
+  if (shares > 0 && holdings.some(h => h.ticker === ticker)) {
+    return { holdings: addPosition(holdings, ticker, -shares, -cents).filter(h => h.shares > 1e-9), cash };
+  }
+  return { holdings: holdings.map(h => ({ ...h })), cash: shares > 0 ? cash : Math.max(0, cash - cents) };
+}
+
 /**
  * Your money vs. returns for one account.
  *   returns  = Σ (market value − cost basis) + dividend income
