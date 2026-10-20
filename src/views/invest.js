@@ -1,11 +1,13 @@
 import { doc, ui, saveUi, save, newId } from '../store.js';
 import { meter, stackBar, chart } from '../charts.js';
-import { money, shares, pct, fmtDate, fmtMonth, timeAgo, esc, ICON, openSheet, toast, $ } from '../ui.js';
+import { money, compact, shares, pct, fmtDate, fmtMonth, timeAgo, esc, ICON, openSheet, toast, $ } from '../ui.js';
 import { priceOf, prices } from '../prices.js';
 import { rebalance, sleeveWeights } from '../domain/rebalance.js';
 import { dividendsInYear, dividendCheckMonth, divFreq, fundsDue, DEFAULT_DIV_FREQ } from '../domain/dividends.js';
 import { applyBuys, undoBuys, applyDividend, undoDividend, accountReturns } from '../domain/holdings.js';
 import { parseCents } from '../domain/money.js';
+import { addMonths, monthsBetween } from '../domain/dates.js';
+import { payrollK401 } from '../domain/balances.js';
 import { bucketColor, notice } from './common.js';
 
 const normTicker = t => { const s = String(t ?? '').trim().toUpperCase().replace(/\s+/g, ''); return /^[A-Z0-9][A-Z0-9.\-]{0,14}$/.test(s) ? s : ''; };
@@ -78,6 +80,8 @@ export function investView(m) {
       ${divYear ? `<span>· ${money(divYear)} dividends in ${year}</span>` : ''}
       <span class="muted small">${prices.refreshing ? 'Updating prices…' : m.quoteTime ? `Prices as of ${new Date(m.quoteTime * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}${prices.lastRefresh ? ` · ${timeAgo(prices.lastRefresh)}` : ''}` : ''}</span></div>
   </section>`;
+  html += goalCard(m);
+  html += insightsCard(m);
   html += accountValuesCard(m);
   if (knownRets.length) {
     const byAcct = doc.accounts.filter(a => a.holdings.length).map(a => ({ a, r: returnsFor(a, m.today) })).filter(x => x.r.known);
@@ -171,6 +175,130 @@ function accountCard(m, a, v, bucket) {
   return html + '</div>';
 }
 
+// ---------------------------------------------------------------- road to the goal
+const equityIds = m => m.buckets.filter(b => b.assetClass === 'equity').map(b => b.id);
+const sumOf = (ids, obj) => ids.reduce((s, id) => s + (obj?.[id] || 0), 0);
+function inWords(months) {
+  if (months <= 0) return 'this month';
+  const y = Math.floor(months / 12), mo = months % 12;
+  return `in ${y ? `${y} yr${mo ? ' ' : ''}` : ''}${mo ? `${mo} mo` : ''}`;
+}
+
+/** Progress to an invested-money goal ($100K by default): where you are, the path so far, and the plan's path to it. */
+function goalCard(m) {
+  const goal = doc.config.investGoalCents || 10000000;
+  const ids = equityIds(m);
+  const inv = m.nw.invested;
+  const proj = m.projection(120);
+  const hit = proj?.points.find(p => sumOf(ids, p.byBucket) >= goal);
+  const hitNoGrowth = proj?.points.find(p => sumOf(ids, p.principalByBucket) >= goal);
+  const reached = inv >= goal;
+  const end = hit ? [addMonths(hit.date, 3), addMonths(m.today, 12)].sort().pop() : addMonths(m.today, 60);
+  const actual = [...doc.history.filter(h => h.date < m.today && h.byBucket).map(h => ({ x: h.date, y: sumOf(ids, h.byBucket) })), { x: m.today, y: inv }];
+  const projected = proj && !reached ? [{ x: m.today, y: inv }, ...proj.points.filter(p => p.date > m.today && p.date <= end).map(p => ({ x: p.date, y: sumOf(ids, p.byBucket) }))] : [];
+  const label = compact(goal, { mask: false });
+  return `<div class="card">
+    <div class="card-h"><h2>Road to ${esc(label)}</h2><button class="link" data-action="edit-invest-goal">Edit goal${ICON.chevR}</button></div>
+    <div class="between" style="align-items:flex-end;margin-bottom:10px">
+      <div><div class="big">${pct(Math.min(1, inv / goal), 1)}</div><div class="small ink2">of ${esc(label)} invested</div></div>
+      ${reached ? `<span class="pill good">${ICON.check}Reached</span>` : hit ? `<span class="pill">${ICON.flag}~${esc(fmtMonth(hit.date.slice(0, 7), { short: true }))}</span>` : ''}
+    </div>
+    ${meter(inv / goal, { color: 'var(--s1)' })}
+    <div class="meter-legend"><span>${money(inv, { whole: true })} invested</span><span>${reached ? 'Goal reached' : `${money(goal - inv, { whole: true })} to go`}</span></div>
+    ${actual.length + projected.length > 2 ? `<div class="mt16">${chart({
+      type: 'lines', height: 170, yZero: true, label: `Invested money over time and the plan's path to ${label}`,
+      todayX: projected.length ? m.today : null,
+      refLine: { y: goal, label: `${label} goal` },
+      series: [
+        { key: 'actual', label: 'Invested', color: 'var(--s1)', area: true, points: actual, endDot: m.today },
+        { key: 'plan', label: 'On plan', color: 'var(--s1)', dashed: true, points: projected },
+      ],
+      marks: hit && hit.date <= end ? [{ x: hit.date }] : [],
+      tooltip: ({ x, values }) => `<b>${esc(money(values[0].y, { whole: true }))}</b>${esc(fmtDate(x, { year: true }))}${x > m.today ? ' · on plan' : ''}`,
+    })}</div>
+    <div class="chart-legend"><span><i style="background:var(--s1)"></i>Invested</span>${projected.length ? '<span><i class="dash" style="color:var(--s1)"></i>On plan</span>' : ''}<span><i style="background:var(--ink-2)"></i>Goal</span></div>` : ''}
+    ${!reached && hit ? `<p class="note mt12" style="margin-bottom:0">On your plan you reach ${esc(label)} around <strong class="ink2">${esc(fmtMonth(hit.date.slice(0, 7)))}</strong> (${esc(inWords(monthsBetween(m.today, hit.date)))})${hitNoGrowth ? `. From contributions alone, with no market growth, around ${esc(fmtMonth(hitNoGrowth.date.slice(0, 7)))}` : ''}.</p>` : ''}
+    <p class="note" style="margin:6px 0 0">Counts ${esc(m.buckets.filter(b => b.assetClass === 'equity').map(b => b.label).join(', '))}.</p>
+  </div>`;
+}
+
+// ---------------------------------------------------------------- key insights
+function insightsCard(m) {
+  const ids = equityIds(m);
+  const idSet = new Set(ids);
+  const year = m.today.slice(0, 4);
+  // What the plan puts into investments over the next 12 months (incl. 401(k) deferral + match)
+  const proj = m.projection(24);
+  const horizon = addMonths(m.today, 12);
+  let next12 = 0;
+  for (const p of proj?.paychecks || []) {
+    if (p.date > horizon) continue;
+    for (const l of p.lines) if (idSet.has(l.bucketId)) next12 += l.cents;
+    next12 += (p.deferralCents || 0) + (p.matchCents || 0);
+  }
+  const pace = Math.round(next12 / 12);
+  // What the market adds per month at each bucket's expected return
+  const growthMo = m.buckets.filter(b => idSet.has(b.id)).reduce((s, b) => s + Math.round((m.balances[b.id]?.cents || 0) * (Math.pow(1 + (b.expectedAnnualReturn || 0), 1 / 12) - 1)), 0);
+  // Put in this year: transfers to investment buckets + 401(k) payroll
+  let inYear = 0;
+  for (const c of doc.contributions) if (idSet.has(c.bucketId) && c.date.startsWith(year) && c.date <= m.today) inYear += c.cents;
+  const payroll = payrollK401(m.config.incomes, `${Number(year) - 1}-12-31`, m.today, m.periods);
+  inYear += payroll.deferral + payroll.match;
+  // Best fund by return since purchase (needs cost basis)
+  const eqAccounts = doc.accounts.filter(a => m.buckets.some(b => b.account === a.id && idSet.has(b.id)));
+  let best = null;
+  const mix = new Map();
+  for (const a of eqAccounts) {
+    for (const h of a.holdings) {
+      const p = priceOf(h.ticker, doc.tickerMeta);
+      if (!p || !(h.shares > 0)) continue;
+      const v = Math.round(h.shares * p.cents);
+      const group = (a.targets || []).find(s => s.tickers.includes(h.ticker))?.label || h.ticker;
+      mix.set(group, (mix.get(group) || 0) + v);
+      if (Number.isInteger(h.costCents) && h.costCents > 0) {
+        const r = (v - h.costCents) / h.costCents;
+        if (!best || r > best.pct) best = { ticker: h.ticker, pct: r, gain: v - h.costCents, account: a.name };
+      }
+    }
+  }
+  const divYear = dividendsInYear(doc.dividends, Number(year));
+  const mixTotal = [...mix.values()].reduce((s, v) => s + v, 0);
+  const groups = [...mix.entries()].sort((x, y) => y[1] - x[1]).map(([label, cents], i) => ({ label, cents, color: `var(--s${(i % 8) + 1})` }));
+  const tile = (label, value, note, cls = '') => `<div class="tile" style="box-shadow:none;background:var(--surface-2)"><div class="tile-label">${label}</div><div class="tile-value ${cls}">${value}</div><div class="tile-note">${note}</div></div>`;
+  const share = pace > 0 ? growthMo / pace : 0;
+  return `<div class="card">
+    <div class="card-h"><h2>Key insights</h2></div>
+    <div class="tiles" style="margin-bottom:0">
+      ${tile('Investing', `${money(pace, { whole: true })}/mo`, 'on your plan, next 12 months')}
+      ${tile('Market adds', `≈ ${money(growthMo, { whole: true })}/mo`, 'at your expected returns')}
+      ${tile(`Put in ${year}`, money(inYear, { whole: true }), 'transfers + 401(k) payroll')}
+      ${best ? tile('Best fund', `${esc(best.ticker)} ${pct(best.pct, 1, { sign: true })}`, `${money(best.gain, { whole: true, sign: true })} in ${esc(best.account)}`, best.pct >= 0 ? 'good' : 'bad')
+        : tile(`Dividends ${year}`, money(divYear), 'logged so far')}
+    </div>
+    ${pace > 0 ? `<p class="note mt12" style="margin-bottom:0">${share < 0.5
+      ? `Your contributions are doing most of the work: the market adds about <strong class="ink2">${money(growthMo, { whole: true })}</strong> a month against the <strong class="ink2">${money(pace, { whole: true })}</strong> you put in. That flips as the balance grows.`
+      : `The market now adds about ${pct(share, 0)} as much each month as you put in.`}</p>` : ''}
+    ${groups.length ? `<div class="between mt16" style="margin-bottom:8px"><span style="font-weight:650">Mix across all accounts</span><span class="small muted">${money(mixTotal, { whole: true })}</span></div>
+      ${stackBar(groups.map(g => ({ cents: g.cents, color: g.color, label: g.label })))}
+      <div class="legend">${groups.map(g => `<div class="legend-row"><span class="sw" style="background:${g.color}"></span><span class="lbl">${esc(g.label)}</span><span class="val">${pct(g.cents / mixTotal, 1)}<small>${money(g.cents, { whole: true })}</small></span></div>`).join('')}</div>` : ''}
+  </div>`;
+}
+
+function openGoalSheet() {
+  const goal = doc.config.investGoalCents || 10000000;
+  openSheet({
+    title: 'Investing goal', submitLabel: 'Save',
+    body: `<div class="amount-input"><span>$</span><input name="amount" inputmode="decimal" value="${(goal / 100).toFixed(0)}"></div>
+      <p class="note" style="text-align:center">How much you want invested across your Roth, taxable and 401(k).</p><p class="err" id="g-err"></p>`,
+    onSubmit: form => {
+      const c = parseCents(form.elements.amount.value);
+      if (!(c > 0)) { $('#g-err', form).textContent = 'Enter a goal amount.'; return false; }
+      if (c === 10000000) delete doc.config.investGoalCents; else doc.config.investGoalCents = c;
+      save(); rerender();
+    },
+  });
+}
+
 /**
  * One line per investment account over time — from the daily history the app records (plus the
  * balances imported from your spreadsheet) and today's live value. Colors follow each account's bucket.
@@ -184,8 +312,14 @@ function accountValuesCard(m) {
     return { key: b.id, label: acct.name, color: bucketColor(b), points, endDot: m.today, now: now ?? 0 };
   }).filter(s => s.points.some(p => p.y > 0));
   if (!series.length) return '';
-  const days = new Set(series.flatMap(s => s.points.map(p => p.x))).size;
+  const dates = [...new Set(series.flatMap(s => s.points.map(p => p.x)))].sort();
+  const days = dates.length;
   const total = series.reduce((a, s) => a + s.now, 0);
+  // Total across the accounts, carrying each account's last known value forward on days it has no point.
+  if (series.length > 1) {
+    const valueOn = (s, d) => { let v = 0; for (const p of s.points) if (p.x <= d) v = p.y; return v; };
+    series.unshift({ key: 'total', label: 'All accounts', color: 'var(--ink)', points: dates.map(d => ({ x: d, y: series.reduce((a, s) => a + valueOn(s, d), 0) })), endDot: m.today, now: total, isTotal: true });
+  }
   return `<div class="card">
     <div class="card-h"><h2>Account values</h2><span class="small muted">${money(total, { whole: true })} total</span></div>
     ${days >= 2 ? chart({
@@ -197,8 +331,8 @@ function accountValuesCard(m) {
       const first = s.points[0];
       const change = first && first.x < m.today ? s.now - first.y : null;
       return `<div class="legend-row"><span class="sw" style="background:${s.color};height:3px;border-radius:2px;width:14px"></span>
-        <span class="lbl">${esc(s.label)}${change != null ? `<small>${money(change, { whole: true, sign: true })} since ${esc(fmtDate(first.x, { year: true }))}</small>` : ''}</span>
-        <span class="val">${money(s.now)}<small>${pct(total ? s.now / total : 0, 0)} of total</small></span></div>`;
+        <span class="lbl"${s.isTotal ? ' style="font-weight:650"' : ''}>${esc(s.label)}${change != null ? `<small>${money(change, { whole: true, sign: true })} since ${esc(fmtDate(first.x, { year: true }))}</small>` : ''}</span>
+        <span class="val">${money(s.now)}<small>${s.isTotal ? 'sum of the lines' : `${pct(total ? s.now / total : 0, 0)} of total`}</small></span></div>`;
     }).join('')}</div>
   </div>`;
 }
@@ -782,6 +916,7 @@ function openAccountSheet(m, acctId) {
 
 export const investActions = {
   'cost-basis': (el, m) => openCostSheet(m, el.dataset.acct),
+  'edit-invest-goal': () => openGoalSheet(),
   'log-buy': (el, m) => openBuySheet(m, el.dataset.acct, el.dataset.contrib || null),
   'log-dividend': (el, m) => openDividendSheet(m, { acctId: el.dataset.acct }),
   'dividend-check': (el, m) => openDividendSheet(m, { month: el.dataset.month }),

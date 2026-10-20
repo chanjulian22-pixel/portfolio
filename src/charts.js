@@ -63,7 +63,7 @@ function renderLines(el, spec, W) {
   });
 
   const x0 = t(xs[0]), x1 = t(xs[xs.length - 1]);
-  const ys = geom.flatMap(g => g.pts.map(p => p.top)).concat(spec.yZero || stacked ? [0] : []);
+  const ys = geom.flatMap(g => g.pts.map(p => p.top)).concat(spec.yZero || stacked ? [0] : [], spec.refLine ? [spec.refLine.y] : []);
   let ymin = Math.min(...ys), ymax = Math.max(...ys);
   if (!spec.yZero && !stacked) { const pad = (ymax - ymin) * 0.12 || Math.abs(ymax) * 0.05 || 100; ymin -= pad; ymax += pad; }
   const { lo, hi, ticks } = niceTicks(ymin, ymax, 3);
@@ -76,6 +76,7 @@ function renderLines(el, spec, W) {
   for (const v of ticks) {
     const y = Y(v);
     svg += `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--grid)" stroke-width="1"/>`;
+    if (spec.refLine && Math.abs(Y(spec.refLine.y) - y) < 12) continue; // the goal label takes this spot
     tickLabels += `<text x="0" y="${y - 4}" font-size="10.5" fill="var(--muted)" class="num" stroke="var(--surface)" stroke-width="3" stroke-linejoin="round" paint-order="stroke">${esc(compact(v * 1, { mask: true }))}</text>`;
   }
   // x labels: first, last, and evenly spaced months between
@@ -118,6 +119,13 @@ function renderLines(el, spec, W) {
     const top = geom[geom.length - 1].pts;
     const near = top.reduce((a, b) => Math.abs(t(b.x) - t(mk.x)) < Math.abs(t(a.x) - t(mk.x)) ? b : a, top[0]);
     svg += `<circle cx="${X(mk.x)}" cy="${Y(near.top)}" r="4" fill="var(--surface)" stroke="var(--ink)" stroke-width="2"/>`;
+  }
+  // goal / reference line: solid, labeled, ink-colored so it doesn't read as a data series
+  if (spec.refLine) {
+    const y = Y(spec.refLine.y);
+    svg += `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--ink-2)" stroke-width="1.5"/>`;
+    // Left side: the data usually starts low there, and the right end is where a goal gets reached.
+    tickLabels += `<text x="0" y="${y - 5}" font-size="11" font-weight="650" fill="var(--ink-2)" stroke="var(--surface)" stroke-width="3" stroke-linejoin="round" paint-order="stroke">${esc(spec.refLine.label)}</text>`;
   }
   svg += tickLabels;
   svg += `<g class="hover" opacity="0"><line class="cx" y1="${padT}" y2="${H - padB}" stroke="var(--ink-2)" stroke-width="1"/>`;

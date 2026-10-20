@@ -83,6 +83,7 @@ export function sanitizeDoc(d) {
     events: Array.isArray(c.events) ? c.events.filter(e => e && isoOk(e.date)) : [],
     budgetOverrides: c.budgetOverrides && typeof c.budgetOverrides === 'object' ? Object.fromEntries(Object.entries(c.budgetOverrides).filter(([k, v]) => /^\d{4}-\d{2}$/.test(k) && isInt(v))) : {},
     todos: Array.isArray(c.todos) ? c.todos.filter(t => t && t.id && t.text) : [],
+    ...(isInt(c.investGoalCents) && c.investGoalCents > 0 ? { investGoalCents: c.investGoalCents } : {}),
   };
   const rows = (list, ok) => (Array.isArray(list) ? list.filter(x => x && typeof x === 'object' && ok(x)) : []);
   return {

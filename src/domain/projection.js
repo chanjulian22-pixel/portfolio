@@ -36,7 +36,7 @@ export function project({ config, startDate, endDate, balances, ytd = {}, sentAh
   const reached = new Set();
 
   const total = obj => Object.values(obj).reduce((a, b) => a + b, 0);
-  const snapshot = date => ({ date, total: total(bal), principal: total(principal), growth: total(growth), byBucket: { ...bal } });
+  const snapshot = date => ({ date, total: total(bal), principal: total(principal), growth: total(growth), byBucket: { ...bal }, principalByBucket: { ...principal } });
   const points = [snapshot(startDate)];
 
   // Anything already at its cap when the projection starts isn't a future milestone.
