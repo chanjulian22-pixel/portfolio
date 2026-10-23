@@ -20,7 +20,7 @@
         { "cat": "dining", "rate": 4, "capCents": 5000000, "capPer": "year", "note": "Restaurants worldwide, incl. takeout and delivery · up to $50K a year, then 1x" },
         { "cat": "groceries", "rate": 4, "capCents": 2500000, "capPer": "year", "note": "US supermarkets · up to $25K a year, then 1x" },
         { "cat": "flights", "rate": 3, "note": "Booked directly with the airline or on AmexTravel.com" },
-        { "cat": "portal", "rate": 5, "note": "Prepaid hotels on AmexTravel.com (flights there earn 3x)" },
+        { "cat": "portal", "rate": 5, "merchants": ["amextravel"], "note": "Prepaid hotels on AmexTravel.com (flights there earn 3x)" },
         { "cat": "other", "rate": 1 }
       ],
       "credits": [
@@ -65,7 +65,7 @@
       "annualFeeCents": 0,
       "firstYearFree": false,
       "earn": [
-        { "cat": "portal", "rate": 5, "note": "Travel booked through Chase Travel" },
+        { "cat": "portal", "rate": 5, "merchants": ["chasetravel"], "note": "Travel booked through Chase Travel" },
         { "cat": "dining", "rate": 3, "note": "Restaurants, incl. takeout and eligible delivery" },
         { "cat": "drugstore", "rate": 3 },
         { "cat": "other", "rate": 1 }
@@ -106,7 +106,7 @@
       "annualFeeCents": 0,
       "firstYearFree": false,
       "earn": [
-        { "cat": "portal", "rate": 5, "note": "Travel booked through Chase Travel" },
+        { "cat": "portal", "rate": 5, "merchants": ["chasetravel"], "note": "Travel booked through Chase Travel" },
         { "cat": "dining", "rate": 3, "note": "Restaurants, incl. takeout and eligible delivery" },
         { "cat": "drugstore", "rate": 3 },
         { "cat": "rideshare", "rate": 2, "merchants": ["lyft"], "note": "Lyft rides in the Lyft app, through 9/30/2027" },
@@ -127,7 +127,7 @@
       "annualFeeCents": 79500,
       "firstYearFree": false,
       "earn": [
-        { "cat": "portal", "rate": 8, "note": "Chase Travel, incl. The Edit hotels" },
+        { "cat": "portal", "rate": 8, "merchants": ["chasetravel"], "note": "Chase Travel, incl. The Edit hotels" },
         { "cat": "flights", "rate": 4, "note": "Booked directly with the airline" },
         { "cat": "hotels", "rate": 4, "note": "Booked directly with the hotel" },
         { "cat": "dining", "rate": 3, "note": "Dining worldwide, incl. takeout and delivery" },

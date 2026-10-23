@@ -163,12 +163,64 @@ export function exportJSON() {
 }
 
 /**
+ * Add the transactions in an "additions" file (e.g. a work expense report) to what's on this phone.
+ * Nothing is replaced. Cards are matched by catalog id and added if missing. A transaction already
+ * here (same id, or same date and amount) isn't added twice; a same-day, same-amount purchase you
+ * logged yourself is marked as the work expense instead.
+ */
+export function mergeAdditions(parsed) {
+  if (!parsed || parsed.app !== 'ledger' || parsed.kind !== 'additions') throw new Error('Not a Ledger additions file.');
+  doc.cards = doc.cards || [];
+  let cardsAdded = 0;
+  for (const c of Array.isArray(parsed.cards) ? parsed.cards : []) {
+    if (!c || typeof c.catalogId !== 'string') continue;
+    const opened = typeof c.opened === 'string' && /^\d{4}-\d{2}$/.test(c.opened) ? c.opened : undefined;
+    const mine = doc.cards.find(x => x.catalogId === c.catalogId);
+    if (mine) { if (!mine.opened && opened) mine.opened = opened; continue; }
+    doc.cards.push({ id: newId('card'), catalogId: c.catalogId, opened, ...(typeof c.firstYearFree === 'boolean' ? { firstYearFree: c.firstYearFree } : {}), creditsUsed: {}, activated: [] });
+    cardsAdded++;
+  }
+  const cardFor = catalogId => doc.cards.find(x => x.catalogId === catalogId)?.id;
+  let added = 0, matched = 0, already = 0;
+  const ids = new Set(doc.transactions.map(t => t.id));
+  // Only what was here before this import can be a duplicate (a report can hold two $200 exams on
+  // one day), and each of those stands in for one incoming row at most.
+  const before = [...doc.transactions];
+  const taken = new Set();
+  for (const t of Array.isArray(parsed.transactions) ? parsed.transactions : []) {
+    if (!t || !isoOk(t.date) || !isInt(t.cents)) continue;
+    if (t.id && ids.has(t.id)) { already++; continue; }
+    const cardId = t.card ? cardFor(t.card) : undefined;
+    const reimbursedOn = isoOk(t.reimbursedOn) ? t.reimbursedOn : undefined;
+    const same = before.find(x => !taken.has(x) && x.date === t.date && x.cents === t.cents);
+    if (same) {
+      taken.add(same);
+      if (t.work && !same.work) { same.work = true; delete same.fundedBy; matched++; } else already++;
+      if (t.work && reimbursedOn && !same.reimbursedOn) same.reimbursedOn = reimbursedOn;
+      if (cardId && !same.cardId) same.cardId = cardId;
+      continue;
+    }
+    const { card, ...rest } = t;
+    doc.transactions.push({
+      ...rest, id: t.id || newId('t'), item: str(t.item, 80) || 'Untitled', cardId,
+      work: t.work ? true : undefined, reimbursedOn: t.work ? reimbursedOn : undefined, createdAt: t.createdAt || Date.now(),
+    });
+    ids.add(t.id);
+    added++;
+  }
+  save();
+  return { kind: 'additions', added, matched, already, cardsAdded };
+}
+
+/**
  * Import a Ledger file. Holdings already on this phone are kept when the file has none
  * (so importing your spreadsheet data doesn't wipe shares you entered).
+ * An "additions" file is merged instead (see mergeAdditions).
  */
 export function importJSON(text) {
   let parsed;
   try { parsed = JSON.parse(text); } catch { throw new Error('That file isn’t valid JSON.'); }
+  if (parsed?.kind === 'additions') return mergeAdditions(parsed);
   const next = sanitizeDoc(parsed);
   for (const acct of next.accounts) {
     const mine = doc.accounts.find(a => a.id === acct.id);

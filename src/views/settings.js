@@ -439,6 +439,14 @@ export async function importFile(file) {
   let summary;
   try {
     const peek = JSON.parse(text);
+    if (peek.kind === 'additions') {
+      const n = Array.isArray(peek.transactions) ? peek.transactions.length : 0;
+      if (!confirm(`Add ${n} transaction${n === 1 ? '' : 's'} from ${peek.label || 'this file'}? Nothing already on this phone is replaced, and anything you’ve already logged isn’t added twice.`)) return;
+      const r = importJSON(text);
+      toast(`Added ${r.added}${r.matched ? `, matched ${r.matched} you’d logged` : ''}${r.already ? `, ${r.already} already here` : ''}${r.cardsAdded ? ` · added ${r.cardsAdded} card${r.cardsAdded === 1 ? '' : 's'}` : ''}`);
+      window.dispatchEvent(new Event('ledger:render'));
+      return;
+    }
     const what = peek.kind === 'seed' ? 'your prepared data file' : 'this backup';
     if (doc.transactions.length || doc.config.incomes.length) {
       if (!confirm(`Replace your plan, transactions, balances and loans with ${what}? Holdings you entered on this phone are kept.`)) return;

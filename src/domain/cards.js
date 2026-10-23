@@ -37,6 +37,9 @@ export const MERCHANTS = [
   { id: 'wholefoods', name: 'Whole Foods', re: /\bwhole foods\b|\bamazon fresh\b/, cat: 'groceries' },
   { id: 'amazon', name: 'Amazon', re: /\bamazon\b/, cat: 'other' },
   { id: 'airbnb', name: 'Airbnb', re: /\bairbnb\b/, cat: 'other', note: 'Most cards don’t count Airbnb as a hotel.' },
+  // each issuer's travel site only boosts that issuer's cards
+  { id: 'chasetravel', name: 'Chase Travel', re: /\bchase travel\b/, cat: 'portal' },
+  { id: 'amextravel', name: 'Amex Travel', re: /\bamex ?travel\b|\bamerican express travel\b/, cat: 'portal' },
   // delivery apps count as restaurants
   { id: 'ubereats', name: 'Uber Eats', re: /\buber ?eats\b/, cat: 'dining' },
   { id: 'doordash', name: 'DoorDash', re: /\bdoor ?dash\b/, cat: 'dining' },
@@ -167,9 +170,13 @@ export function pointCents(card, catalog, prefs = {}) {
   return prefs[card.program] ?? catalog?.programs?.[card.program]?.cents ?? 1;
 }
 
+// A rule limited to some stores applies only there. With no store known, a travel-portal rule is
+// taken to mean the card's own portal ("booked through the card's travel site").
+const ruleFits = (r, cat, merchant) => r.cat === cat && (!r.merchants || (merchant ? r.merchants.includes(merchant) : cat === 'portal'));
+
 function rules(card, cat, date, merchant) {
   const fallback = card.earn.find(r => r.cat === 'other') || { cat: 'other', rate: 1 };
-  const base = card.earn.find(r => r.cat === cat && (!r.merchants || r.merchants.includes(merchant))) || fallback;
+  const base = card.earn.find(r => ruleFits(r, cat, merchant)) || fallback;
   const rot = (card.rotating || []).find(r => r.quarter === quarterOf(date) && r.cats.includes(cat)) || null;
   return { base, rot, fallback };
 }
