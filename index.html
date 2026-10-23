@@ -19,6 +19,7 @@
   <header class="top">
     <div class="wrap">
       <h1 id="title">Ledger</h1>
+      <button class="icon-btn" id="btn-card" aria-label="Which card should I use?"></button>
       <button class="icon-btn" id="btn-hide" aria-label="Hide amounts"></button>
       <button class="icon-btn" id="btn-refresh" aria-label="Refresh prices" hidden></button>
       <button class="icon-btn" id="btn-settings" aria-label="Settings"></button>
@@ -32,6 +33,7 @@
   <noscript><p style="padding:24px">Ledger needs JavaScript.</p></noscript>
   <script type="module">
     import { ICON } from './src/ui.js';
+    document.getElementById('btn-card').innerHTML = ICON.spending;
     document.getElementById('btn-refresh').innerHTML = ICON.refresh;
     document.getElementById('btn-settings').innerHTML = ICON.gear;
     document.getElementById('fab').innerHTML = ICON.plus;

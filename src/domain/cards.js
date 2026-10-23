@@ -2,6 +2,7 @@
 // credits, and whether an annual fee is paying for itself. Pure functions; card terms come from
 // src/data/cards.json (the catalog) merged with the cards you own.
 import { addMonths, addDays, iso, daysBetween } from './dates.js';
+import { categorize } from './spending.js';
 
 /** What the card networks reward — coarser than spending categories, finer where cards differ. */
 export const REWARD_CATS = [
@@ -19,8 +20,101 @@ export const REWARD_CATS = [
 ];
 export const rewardCatById = id => REWARD_CATS.find(c => c.id === id) || REWARD_CATS[REWARD_CATS.length - 1];
 
-/** Map a logged transaction to a reward category, from its spending category and what it was. */
+export const NETWORKS = { visa: 'Visa', mastercard: 'Mastercard', amex: 'Amex', discover: 'Discover' };
+
+const SUPERSTORE = 'Card issuers count superstores and warehouse clubs as general purchases, not groceries.';
+const list = (cat, rows) => rows.map(([name, re]) => ({ name, re, cat }));
+/**
+ * Stores and brands, matched against normalized text (lowercase, no apostrophes). The first match
+ * wins, so stores that aren't what they look like come first. `only`: the card networks accepted.
+ */
+export const MERCHANTS = [
+  { id: 'costco', name: 'Costco', re: /\bcostco\b/, cat: 'other', only: ['visa'], note: `Costco warehouses take only Visa cards. ${SUPERSTORE}` },
+  { id: 'walmart', name: 'Walmart', re: /\bwalmart\b/, cat: 'other', note: SUPERSTORE },
+  { id: 'target', name: 'Target', re: /\btarget\b/, cat: 'other', note: SUPERSTORE },
+  { id: 'bjs', name: 'BJ’s', re: /\bbjs\b/, cat: 'other', note: SUPERSTORE },
+  { id: 'samsclub', name: 'Sam’s Club', re: /\bsams club\b/, cat: 'other', note: SUPERSTORE },
+  { id: 'wholefoods', name: 'Whole Foods', re: /\bwhole foods\b|\bamazon fresh\b/, cat: 'groceries' },
+  { id: 'amazon', name: 'Amazon', re: /\bamazon\b/, cat: 'other' },
+  { id: 'airbnb', name: 'Airbnb', re: /\bairbnb\b/, cat: 'other', note: 'Most cards don’t count Airbnb as a hotel.' },
+  // delivery apps count as restaurants
+  { id: 'ubereats', name: 'Uber Eats', re: /\buber ?eats\b/, cat: 'dining' },
+  { id: 'doordash', name: 'DoorDash', re: /\bdoor ?dash\b/, cat: 'dining' },
+  { id: 'grubhub', name: 'Grubhub / Seamless', re: /\bgrub ?hub\b|\bseamless\b/, cat: 'dining' },
+  { id: 'uber', name: 'Uber', re: /\buber\b/, cat: 'rideshare' },
+  { id: 'lyft', name: 'Lyft', re: /\blyft\b/, cat: 'rideshare' },
+  { id: 'dunkin', name: 'Dunkin’', re: /\bdunkin\b/, cat: 'dining' },
+  { id: 'fiveguys', name: 'Five Guys', re: /\bfive guys\b/, cat: 'dining' },
+  { id: 'cheesecake', name: 'The Cheesecake Factory', re: /\bcheesecake factory\b/, cat: 'dining' },
+  { id: 'bww', name: 'Buffalo Wild Wings', re: /\bbuffalo wild wings\b|\bbww\b/, cat: 'dining' },
+  { id: 'wonder', name: 'Wonder', re: /^wonder\b/, cat: 'dining' },
+  ...list('dining', [['Starbucks', /\bstarbucks\b/], ['Chipotle', /\bchipotle\b/], ['Sweetgreen', /\bsweetgreen\b/], ['Cava', /\bcava\b/],
+    ['Shake Shack', /\bshake shack\b/], ['McDonald’s', /\bmcdonalds\b/], ['Chick-fil-A', /\bchick ?fil ?a\b/], ['Panera', /\bpanera\b/],
+    ['Popeyes', /\bpopeyes\b/], ['Wendy’s', /\bwendys\b/], ['Jersey Mike’s', /\bjersey mikes\b/], ['Joe & The Juice', /\bjoe (and )?the juice\b/], ['Pret', /\bpret\b/]]),
+  ...list('groceries', [['Trader Joe’s', /\btrader joes?\b/], ['Wegmans', /\bwegmans\b/], ['ShopRite', /\bshop ?rite\b/], ['Stop & Shop', /\bstop (and )?shop\b/],
+    ['Key Food', /\bkey food\b/], ['C-Town', /\bc ?town\b/], ['Food Bazaar', /\bfood bazaar\b/], ['Fairway', /\bfairway\b/], ['Morton Williams', /\bmorton williams\b/],
+    ['Gristedes', /\bgristedes\b/], ['H Mart', /\bh ?mart\b/], ['Aldi', /\baldi\b/], ['Lidl', /\blidl\b/], ['Kroger', /\bkroger\b/], ['Safeway', /\bsafeway\b/],
+    ['Publix', /\bpublix\b/], ['Foodtown', /\bfood ?town\b/], ['Acme', /\bacme\b/], ['FreshDirect', /\bfresh ?direct\b/], ['Food Emporium', /\bfood emporium\b/]]),
+  ...list('gas', [['Shell', /\bshell\b/], ['Exxon', /\bexxon\b/], ['Mobil', /\bmobil\b/], ['BP', /\bbp\b/], ['Chevron', /\bchevron\b/], ['Sunoco', /\bsunoco\b/],
+    ['Citgo', /\bcitgo\b/], ['Speedway', /\bspeedway\b/], ['Gulf', /\bgulf\b/], ['Valero', /\bvalero\b/]]),
+  ...list('transit', [['NJ Transit', /\bnj ?transit\b/], ['MTA / OMNY', /\bmta\b|\bomny\b|\bmetro ?card\b/], ['PATH', /\bpath\b/], ['LIRR', /\blirr\b/],
+    ['Metro-North', /\bmetro ?north\b/], ['Amtrak', /\bamtrak\b/], ['E-ZPass', /\be ?z ?pass\b/], ['Citi Bike', /\bciti ?bike\b/], ['SpotHero', /\bspot ?hero\b/]]),
+  ...list('flights', [['Delta', /\bdelta\b/], ['United Airlines', /\bunited air/], ['JetBlue', /\bjet ?blue\b/], ['American Airlines', /\bamerican air/],
+    ['Southwest', /\bsouthwest\b/], ['Alaska Airlines', /\balaska air/], ['Spirit Airlines', /\bspirit air/], ['Frontier Airlines', /\bfrontier air/]]),
+  ...list('hotels', [['Marriott', /\bmarriott\b/], ['Hilton', /\bhilton\b/], ['Hyatt', /\bhyatt\b/], ['IHG / Holiday Inn', /\bihg\b|\bholiday inn\b/],
+    ['Wyndham', /\bwyndham\b/], ['Best Western', /\bbest western\b/]]),
+  { id: 'disney', name: 'Disney+ / Hulu / ESPN+', re: /\bdisney\b|\bhulu\b|\bespn\b/, cat: 'streaming' },
+  ...list('streaming', [['Netflix', /\bnetflix\b/], ['Spotify', /\bspotify\b/], ['HBO Max', /\bhbo\b/], ['YouTube TV / Premium', /\byoutube\b/],
+    ['Peacock', /\bpeacock\b/], ['Paramount+', /\bparamount\b/], ['Apple TV / Music', /\bapple (tv|music)\b/], ['SiriusXM', /\bsirius/]]),
+  ...list('drugstore', [['CVS', /\bcvs\b/], ['Walgreens', /\bwalgreens\b/], ['Rite Aid', /\brite aid\b/], ['Duane Reade', /\bduane reade\b/]]),
+  { id: 'stubhub', name: 'StubHub', re: /\bstub ?hub\b|\bviagogo\b/, cat: 'other' },
+];
+for (const x of MERCHANTS) x.id ||= x.name.toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+const norm = text => String(text || '').toLowerCase().replace(/['’`]/g, '').replace(/[^a-z0-9+]+/g, ' ').trim();
+
+/** The store or brand in some text ("Trader Joe's", "uber eats order"), or null. */
+export function merchantFor(text) {
+  const s = norm(text);
+  return s ? MERCHANTS.find(x => x.re.test(s)) || null : null;
+}
+
+// Plain words, for when no store matches ("dinner", "gas", "parking").
+const KEYWORDS = [
+  ['dining', /\b(restaurants?|dinner|lunch|breakfast|brunch|coffee|cafe|bars?|drinks?|beers?|pizza|sushi|takeout|food|bagels?|deli|tacos?|burgers?|bakery)\b/],
+  ['groceries', /\b(grocery|groceries|supermarket)\b/],
+  ['gas', /\b(gas|fuel)\b/],
+  ['rideshare', /\b(taxi|cab|rideshare)\b/],
+  ['transit', /\b(train|bus|subway|metro|tolls?|parking|ferry)\b/],
+  ['flights', /\b(flights?|airlines?|airfare|plane)\b/],
+  ['hotels', /\b(hotels?|motel|resort)\b/],
+  ['streaming', /\bstreaming\b/],
+  ['drugstore', /\b(pharmacy|drugstore)\b/],
+];
+
+/**
+ * Best guess at the reward category for a purchase you're about to make: a known store, then how
+ * you categorized the same thing before, then plain words. Null when it can't tell.
+ */
+export function guessRewardCat(text, txs = []) {
+  const brand = merchantFor(text);
+  if (brand) return brand.cat;
+  const key = String(text || '').trim().toLowerCase();
+  if (!key) return null;
+  for (let i = txs.length - 1; i >= 0; i--) {
+    const t = txs[i];
+    if (t.cents > 0 && t.category && String(t.item || '').trim().toLowerCase() === key) return rewardCatFor(t);
+  }
+  const s = norm(text);
+  for (const [cat, re] of KEYWORDS) if (re.test(s)) return cat;
+  const category = categorize(text, 1);
+  return category === 'other' ? null : rewardCatFor({ category, item: text });
+}
+
+/** Map a logged transaction to a reward category, from the store, its spending category and what it was. */
 export function rewardCatFor(t) {
+  const brand = merchantFor(t.item);
+  if (brand) return brand.cat;
   const s = String(t.item || '').toLowerCase();
   switch (t.category) {
     case 'food':
@@ -54,6 +148,7 @@ export function resolveCard(owned, catalog) {
     name: base?.name || custom.name || 'Card',
     short: owned.nickname || base?.short || custom.name || 'Card',
     issuer: base?.issuer || custom.issuer || '',
+    network: base?.network || custom.network || null,
     program: base?.program || custom.program || 'cash',
     annualFeeCents: Number.isInteger(owned.feeCents) ? owned.feeCents : base?.annualFeeCents ?? custom.annualFeeCents ?? 0,
     firstYearFree: owned.firstYearFree ?? base?.firstYearFree ?? false,
@@ -72,9 +167,9 @@ export function pointCents(card, catalog, prefs = {}) {
   return prefs[card.program] ?? catalog?.programs?.[card.program]?.cents ?? 1;
 }
 
-function rules(card, cat, date) {
+function rules(card, cat, date, merchant) {
   const fallback = card.earn.find(r => r.cat === 'other') || { cat: 'other', rate: 1 };
-  const base = card.earn.find(r => r.cat === cat) || fallback;
+  const base = card.earn.find(r => r.cat === cat && (!r.merchants || r.merchants.includes(merchant))) || fallback;
   const rot = (card.rotating || []).find(r => r.quarter === quarterOf(date) && r.cats.includes(cat)) || null;
   return { base, rot, fallback };
 }
@@ -85,8 +180,8 @@ const isActivated = (card, quarter) => !!card.owned?.activated?.includes(quarter
  * Reward units earned on one purchase (points, or cents of cash back — both are cents × rate ÷ 100),
  * consuming caps in `used`. A rotating bonus only applies once activated (unless `assumeActivated`).
  */
-function earnOn(card, cat, date, cents, used, assumeActivated = false) {
-  const { base, rot, fallback } = rules(card, cat, date);
+function earnOn(card, cat, date, cents, used, assumeActivated = false, merchant = null) {
+  const { base, rot, fallback } = rules(card, cat, date, merchant);
   let units = 0, left = cents;
   if (rot && (assumeActivated || isActivated(card, rot.quarter))) {
     const k = `rot|${rot.quarter}`;
@@ -117,7 +212,7 @@ export function earnings(card, txs, { from = '0000-01-01', to = '9999-12-31', va
   let units = 0;
   for (const t of [...txs].sort((a, b) => a.date.localeCompare(b.date))) {
     if (!(t.cents > 0) || t.date > to) continue;
-    const u = earnOn(card, rewardCatFor(t), t.date, t.cents, used);
+    const u = earnOn(card, rewardCatFor(t), t.date, t.cents, used, false, merchantFor(t.item)?.id);
     if (t.date >= from) units += u;
   }
   return { units, cents: Math.round(units * valueCents), used };
@@ -129,22 +224,25 @@ function capUsage(card, txs, today) {
 }
 
 /**
- * Your cards ranked for a purchase category today.
- * @returns {{card, rate, pct, note, capLeftCents, activate, perks: string[]}[]}
+ * Your cards ranked for a purchase category today. `merchant` (from merchantFor) applies store-only
+ * rates and credits, and puts cards the store doesn't accept last.
+ * @returns {{card, rate, pct, afterPct, note, capLeftCents, activate, blocked, perks: string[]}[]}
  */
-export function bestCards(cards, cat, { today, txs = [], catalog, prefs = {} }) {
+export function bestCards(cards, cat, { today, txs = [], catalog, prefs = {}, merchant = null }) {
   const out = cards.map(card => {
     const mine = txs.filter(t => t.cardId === card.id);
     const used = capUsage(card, mine, today);
-    const { base, rot, fallback } = rules(card, cat, today);
-    let rate = base.rate, note = base.note || '', capLeft = null, activate = null;
+    const { base, rot, fallback } = rules(card, cat, today, merchant?.id);
+    let rate = base.rate, note = base.note || '', capLeft = null, activate = null, after = null;
     if (base.capCents) {
       capLeft = Math.max(0, base.capCents - (used[capKey(base, today)] || 0));
       if (capLeft === 0) { rate = fallback.rate; note = `Cap reached for the year — ${fallback.rate}x until January`; capLeft = null; }
+      else after = fallback.rate;
     }
     if (rot) {
       const rotLeft = Math.max(0, rot.capCents - (used[`rot|${rot.quarter}`] || 0));
       if (rotLeft > 0 && rot.rate > rate) {
+        after = rate;
         rate = rot.rate;
         note = `Quarterly bonus: ${rot.label}`;
         capLeft = rotLeft;
@@ -152,9 +250,16 @@ export function bestCards(cards, cat, { today, txs = [], catalog, prefs = {} }) 
       }
     }
     const pc = pointCents(card, catalog, prefs);
-    return { card, rate, pct: rate * pc / 100, note, capLeftCents: capLeft, activate, perks: creditHints(card, cat, today) };
+    const blocked = merchant?.only && card.network && !merchant.only.includes(card.network) ? `${merchant.name} doesn’t take ${NETWORKS[card.network] || card.network}` : null;
+    return { card, rate, pct: rate * pc / 100, afterPct: after != null ? after * pc / 100 : null, note, capLeftCents: capLeft, activate, blocked, perks: creditHints(card, cat, today, merchant?.id) };
   });
-  return out.sort((a, b) => b.pct - a.pct || (a.card.annualFeeCents - b.card.annualFeeCents));
+  return out.sort((a, b) => (a.blocked ? 1 : 0) - (b.blocked ? 1 : 0) || b.pct - a.pct || (a.card.annualFeeCents - b.card.annualFeeCents));
+}
+
+/** What a purchase of `cents` earns with one ranked card, in cents of value (caps included). */
+export function valueOn(r, cents) {
+  if (r.capLeftCents != null && cents > r.capLeftCents) return Math.round(r.capLeftCents * r.pct + (cents - r.capLeftCents) * (r.afterPct ?? r.pct));
+  return Math.round(cents * r.pct);
 }
 
 // ---------------------------------------------------------------- credits
@@ -208,11 +313,11 @@ export function creditUsedNow(card, credit, today) {
   return card.owned?.creditsUsed?.[credit.id]?.[periodKey(credit.per, today, card.opened)] || 0;
 }
 
-/** Credits relevant to a purchase category that still have money left this period. */
-function creditHints(card, cat, today) {
-  return (card.credits || []).filter(c => c.cats?.includes(cat)).map(c => {
+/** Credits that apply to a purchase (by store when the credit is store-only) with money left this period. */
+function creditHints(card, cat, today, merchant) {
+  return (card.credits || []).filter(c => c.merchants ? c.merchants.includes(merchant) : c.cats?.includes(cat)).map(c => {
     const left = c.cents - creditUsedNow(card, c, today);
-    return left > 0 ? `$${(left / 100).toFixed(left % 100 ? 2 : 0)} ${c.label} left ${periodLabel(c.per)}` : null;
+    return left > 0 ? `$${(left / 100).toFixed(left % 100 ? 2 : 0)} ${c.label} left ${periodLabel(c.per)}${c.if ? ` ${c.if}` : ''}` : null;
   }).filter(Boolean);
 }
 

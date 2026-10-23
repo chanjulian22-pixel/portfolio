@@ -6,12 +6,13 @@ import { isAsset } from '../domain/allocation.js';
 import { txRow, sortTx, notice, bucketColor, deltaHtml } from './common.js';
 import { dividendCheck, pendingBuys, returnsFor } from './invest.js';
 import { outstandingWork } from '../domain/spending.js';
-import { cardAlerts } from './cards.js';
+import { cardAlerts, payBar } from './cards.js';
 
 export function homeView(m) {
   if (!m.hasData) return { title: 'Ledger', html: onboarding() };
   let html = '';
   html += netWorthSection(m);
+  if (m.cards.length) html += payBar();
   html += tiles(m);
   html += spendingCard(m);
   html += paycheckCard(m);

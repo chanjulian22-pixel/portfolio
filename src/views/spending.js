@@ -171,18 +171,18 @@ export function openTxSheet(m, tx = null, defaults = {}) {
       };
       const toCents = () => Math.abs(parseCents(amount.value));
       // New purchases default to the card that earns the most on them; edits keep the card recorded.
-      let cardPicked = !isNew;
+      let cardPicked = !isNew || !!t.cardId;
       const cardHint = () => {
         if (!f.card) return;
         const hint = $('#tx-card-hint', root);
         if (sign < 0) { hint.innerHTML = ''; return; }
         const { cat, ranked } = rankForPurchase(m, category, f.what.value);
-        const best = ranked[0];
+        const best = ranked.find(r => !r.blocked) || ranked[0];
         if (!cardPicked) f.card.value = best.card.id;
         const mine = ranked.find(r => r.card.id === f.card.value);
         const what = esc(rewardCatById(cat).label.toLowerCase());
         if (mine === best) {
-          hint.innerHTML = `${ICON.check.replace('<svg', '<svg width="13" height="13" style="vertical-align:-2px"')} Best card for ${what}: ${pct(best.pct)} back${best.perks.length ? ` · ${esc(best.perks[0])}` : ''}${best.activate ? `<br><span class="bad">${esc(best.activate)}</span>` : ''}`;
+          hint.innerHTML = `${ICON.check.replace('<svg', '<svg width="13" height="13" style="display:inline-block;vertical-align:-2px"')} Best card for ${what}: ${pct(best.pct)} back${best.perks.length ? ` · ${esc(best.perks[0])}` : ''}${best.activate ? `<br><span class="bad">${esc(best.activate)}</span>` : ''}`;
         } else {
           hint.innerHTML = `${esc(best.card.short)} earns more on ${what}: ${pct(best.pct)} back${mine ? ` vs ${pct(mine.pct)}` : ''}.`;
         }
@@ -205,6 +205,7 @@ export function openTxSheet(m, tx = null, defaults = {}) {
         cardHint();
       });
       f.what.addEventListener('input', () => { recat(); cardHint(); });
+      if (isNew && t.item && !picked) recat();
       cardHint();
       f.undated.addEventListener('change', () => { f.date.disabled = f.undated.checked; });
       f.work.addEventListener('change', () => { if (!isNew) $('#tx-reimb', root).hidden = !f.work.checked; });

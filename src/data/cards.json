@@ -2,9 +2,9 @@
   "updated": "2026-10-23",
   "note": "Card terms as published by the issuers and major review sites. Rates change; each card lists when it was last checked and where. Point values are what one point is worth to you, in cents.",
   "programs": {
-    "MR": { "label": "Amex Membership Rewards", "cents": 1.0, "note": "About 1¢ each toward travel on Amex; 0.6¢ as a statement credit; often 1.5–2¢ through airline and hotel transfer partners." },
-    "UR": { "label": "Chase Ultimate Rewards", "cents": 1.0, "note": "1¢ each as cash back. With a Sapphire Reserve, Points Boost can make select Chase Travel bookings worth up to 2¢." },
-    "cash": { "label": "Cash back", "cents": 1.0, "note": "" }
+    "MR": { "label": "Amex Membership Rewards", "cents": 1, "note": "About 1¢ each toward travel on Amex; 0.6¢ as a statement credit; often 1.5–2¢ through airline and hotel transfer partners." },
+    "UR": { "label": "Chase Ultimate Rewards", "cents": 1, "note": "1¢ each as cash back. With a Sapphire Reserve, Points Boost can make select Chase Travel bookings worth up to 2¢." },
+    "cash": { "label": "Cash back", "cents": 1, "note": "" }
   },
   "cards": [
     {
@@ -12,6 +12,7 @@
       "name": "American Express Gold Card",
       "short": "Amex Gold",
       "issuer": "American Express",
+      "network": "amex",
       "program": "MR",
       "annualFeeCents": 32500,
       "firstYearFree": false,
@@ -23,10 +24,10 @@
         { "cat": "other", "rate": 1 }
       ],
       "credits": [
-        { "id": "dining", "label": "Dining credit", "cents": 1000, "per": "month", "cats": ["dining"], "note": "Grubhub/Seamless, Five Guys, The Cheesecake Factory, Buffalo Wild Wings, Wonder · enrollment required" },
-        { "id": "uber", "label": "Uber Cash", "cents": 1000, "per": "month", "cats": ["rideshare", "dining"], "note": "Uber rides or Uber Eats in the US · add the card to your Uber account" },
-        { "id": "resy", "label": "Resy credit", "cents": 5000, "per": "half", "cats": ["dining"], "note": "US Resy restaurants · $50 Jan–Jun and $50 Jul–Dec · enrollment required" },
-        { "id": "dunkin", "label": "Dunkin' credit", "cents": 700, "per": "month", "cats": ["dining"], "note": "US Dunkin' · enrollment required" }
+        { "id": "dining", "label": "Dining credit", "cents": 1000, "per": "month", "note": "Grubhub/Seamless, Five Guys, The Cheesecake Factory, Buffalo Wild Wings, Wonder · enrollment required", "merchants": ["grubhub", "fiveguys", "cheesecake", "bww", "wonder"] },
+        { "id": "uber", "label": "Uber Cash", "cents": 1000, "per": "month", "note": "Uber rides or Uber Eats in the US · keep the Gold in your Uber account; it applies when you pay with any Amex card", "merchants": ["uber", "ubereats"] },
+        { "id": "resy", "label": "Resy credit", "cents": 5000, "per": "half", "cats": ["dining"], "note": "US Resy restaurants · $50 Jan–Jun and $50 Jul–Dec · enrollment required", "if": "if the restaurant is on Resy" },
+        { "id": "dunkin", "label": "Dunkin' credit", "cents": 700, "per": "month", "note": "US Dunkin' · enrollment required", "merchants": ["dunkin"] }
       ],
       "verified": "2026-10-23",
       "source": "https://www.americanexpress.com/us/credit-cards/card/gold-card/"
@@ -36,6 +37,7 @@
       "name": "Blue Cash Preferred Card from American Express",
       "short": "Amex BCP",
       "issuer": "American Express",
+      "network": "amex",
       "program": "cash",
       "annualFeeCents": 9500,
       "firstYearFree": true,
@@ -48,7 +50,7 @@
         { "cat": "other", "rate": 1 }
       ],
       "credits": [
-        { "id": "disney", "label": "Disney Bundle credit", "cents": 1000, "per": "month", "cats": ["streaming"], "note": "Disney+/Hulu/ESPN+ bundle of $9.99+ · enrollment required · reported as $10/mo since Aug 2025 ($7 before) — check your Amex app" }
+        { "id": "disney", "label": "Disney Bundle credit", "cents": 1000, "per": "month", "note": "Disney+/Hulu/ESPN+ bundle of $9.99+ · enrollment required · reported as $10/mo since Aug 2025 ($7 before) — check your Amex app", "merchants": ["disney"] }
       ],
       "verified": "2026-10-23",
       "source": "https://www.americanexpress.com/us/credit-cards/card/blue-cash-preferred/"
@@ -58,6 +60,7 @@
       "name": "Chase Freedom Flex",
       "short": "Freedom Flex",
       "issuer": "Chase",
+      "network": "mastercard",
       "program": "UR",
       "annualFeeCents": 0,
       "firstYearFree": false,
@@ -79,6 +82,7 @@
       "name": "Chase Freedom (original)",
       "short": "Freedom",
       "issuer": "Chase",
+      "network": "visa",
       "program": "UR",
       "annualFeeCents": 0,
       "firstYearFree": false,
@@ -97,6 +101,7 @@
       "name": "Chase Freedom Unlimited",
       "short": "Freedom Unlimited",
       "issuer": "Chase",
+      "network": "visa",
       "program": "UR",
       "annualFeeCents": 0,
       "firstYearFree": false,
@@ -104,17 +109,20 @@
         { "cat": "portal", "rate": 5, "note": "Travel booked through Chase Travel" },
         { "cat": "dining", "rate": 3, "note": "Restaurants, incl. takeout and eligible delivery" },
         { "cat": "drugstore", "rate": 3 },
+        { "cat": "rideshare", "rate": 2, "merchants": ["lyft"], "note": "Lyft rides in the Lyft app, through 9/30/2027" },
         { "cat": "other", "rate": 1.5 }
       ],
       "credits": [],
       "verified": "2026-10-23",
-      "source": "https://creditcards.chase.com/cash-back-credit-cards/freedom/unlimited"
+      "source": "https://creditcards.chase.com/cash-back-credit-cards/freedom/unlimited",
+      "perks": ["6 months of DashPass if activated by 12/31/2029, plus up to $10 off a non-restaurant DoorDash order each quarter"]
     },
     {
       "id": "chase-sapphire-reserve",
       "name": "Chase Sapphire Reserve",
       "short": "Sapphire Reserve",
       "issuer": "Chase",
+      "network": "visa",
       "program": "UR",
       "annualFeeCents": 79500,
       "firstYearFree": false,
@@ -123,18 +131,18 @@
         { "cat": "flights", "rate": 4, "note": "Booked directly with the airline" },
         { "cat": "hotels", "rate": 4, "note": "Booked directly with the hotel" },
         { "cat": "dining", "rate": 3, "note": "Dining worldwide, incl. takeout and delivery" },
-        { "cat": "rideshare", "rate": 5, "note": "Lyft rides only, through 9/30/2027 (Uber earns 1x)" },
+        { "cat": "rideshare", "rate": 5, "note": "Lyft rides only, through 9/30/2027 (Uber earns 1x)", "merchants": ["lyft"] },
         { "cat": "other", "rate": 1 }
       ],
       "credits": [
         { "id": "travel", "label": "Travel credit", "cents": 30000, "per": "cardyear", "cats": ["flights", "hotels", "portal", "transit", "rideshare"], "note": "Any travel purchase, each account year · those purchases earn no points" },
         { "id": "edit", "label": "The Edit hotel credit", "cents": 50000, "per": "year", "cats": ["portal"], "note": "$250 per prepaid stay of 2+ nights through Chase Travel, up to $500 a year" },
-        { "id": "dining", "label": "Exclusive Tables dining", "cents": 15000, "per": "half", "cats": ["dining"], "note": "OpenTable Sapphire Reserve Exclusive Tables restaurants · $150 Jan–Jun, $150 Jul–Dec" },
-        { "id": "stubhub", "label": "StubHub / viagogo", "cents": 15000, "per": "half", "note": "Concert and event tickets · $150 each half-year through 2027 · activation required" },
-        { "id": "lyft", "label": "Lyft credit", "cents": 1000, "per": "month", "cats": ["rideshare"], "note": "$10 a month through 9/30/2027" },
-        { "id": "doordash", "label": "DoorDash promos", "cents": 1500, "per": "month", "cats": ["dining"], "note": "Free DashPass + $15 off a restaurant order each month (plus two $10 non-restaurant promos)" },
+        { "id": "dining", "label": "Exclusive Tables dining", "cents": 15000, "per": "half", "cats": ["dining"], "note": "OpenTable Sapphire Reserve Exclusive Tables restaurants · $150 Jan–Jun, $150 Jul–Dec", "if": "at an Exclusive Tables restaurant" },
+        { "id": "stubhub", "label": "StubHub / viagogo", "cents": 15000, "per": "half", "note": "Concert and event tickets · $150 each half-year through 2027 · activation required", "merchants": ["stubhub"] },
+        { "id": "lyft", "label": "Lyft credit", "cents": 1000, "per": "month", "note": "$10 a month through 9/30/2027", "merchants": ["lyft"] },
+        { "id": "doordash", "label": "DoorDash promos", "cents": 1500, "per": "month", "note": "Free DashPass + $15 off a restaurant order each month (plus two $10 non-restaurant promos)", "merchants": ["doordash"] },
         { "id": "peloton", "label": "Peloton membership", "cents": 1000, "per": "month", "note": "$10 a month through 2027 · activation required" },
-        { "id": "apple", "label": "Apple TV+ & Apple Music", "cents": 32400, "per": "year", "cats": ["streaming"], "note": "Complimentary subscriptions · only worth it if you'd pay for them" },
+        { "id": "apple", "label": "Apple TV+ & Apple Music", "cents": 32400, "per": "year", "note": "Complimentary subscriptions · only worth it if you'd pay for them" },
         { "id": "global-entry", "label": "Global Entry / TSA PreCheck", "cents": 12000, "per": "every4", "note": "One credit every 4 years" }
       ],
       "perks": ["Priority Pass and Chase Sapphire Lounge access", "IHG One Rewards Platinum Elite through 2027", "Points worth up to 2¢ with Points Boost on select Chase Travel bookings"],

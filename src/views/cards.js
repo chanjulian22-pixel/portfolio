@@ -5,7 +5,7 @@ import { meter } from '../charts.js';
 import { money, pct, fmtDate, fmtMonth, esc, ICON, openSheet, toast, $, $$ } from '../ui.js';
 import {
   REWARD_CATS, rewardCatById, rewardCatFor, bestCards, feeStatus, creditUsedNow, periodKey, periodLabel, periodEnd,
-  perYear, pointCents, simulateCard, resolveCard, quarterOf,
+  perYear, pointCents, simulateCard, resolveCard, quarterOf, MERCHANTS, NETWORKS, merchantFor, guessRewardCat, valueOn,
 } from '../domain/cards.js';
 import { parseCents } from '../domain/money.js';
 import { addMonths, monthsBetween, daysBetween } from '../domain/dates.js';
@@ -20,7 +20,100 @@ const dollars = c => (c % 100 ? (c / 100).toFixed(2) : String(c / 100));
 /** Your cards ranked for a purchase, for the add-transaction sheet. */
 export function rankForPurchase(m, category, item) {
   const cat = rewardCatFor({ category, item });
-  return { cat, ranked: bestCards(m.cards, cat, { today: m.today, txs: doc.transactions, catalog: m.catalog, prefs: m.cardPrefs }) };
+  const merchant = merchantFor(item);
+  return { cat, merchant, ranked: bestCards(m.cards, cat, { today: m.today, txs: doc.transactions, catalog: m.catalog, prefs: m.cardPrefs, merchant }) };
+}
+
+/** The "About to pay?" bar that opens the which-card check (Home and the Cards screen). */
+export const payBar = () => `<button class="pay-bar" data-action="which-card">${ICON.spending}<span>About to pay? Find the best card</span></button>`;
+
+// ---------------------------------------------------------------- before you pay
+// Reward category → spending category, to start the transaction you log afterwards.
+const SPEND_CAT = { dining: 'food', groceries: 'groceries', gas: 'transport', rideshare: 'transport', transit: 'transport', flights: 'travel', hotels: 'travel', portal: 'travel', streaming: 'bills', drugstore: 'health' };
+
+export function openWhichCard(m) {
+  if (!m.cards.length) { openAddCard(m); return; }
+  let picked = null; // a category tapped by hand wins over the guess
+  let best = null, cat = null;
+  const names = [...new Set([...MERCHANTS.map(x => x.name), ...[...doc.transactions].reverse().filter(t => t.cents > 0).map(t => t.item)])].slice(0, 250);
+  openSheet({
+    title: 'Which card?',
+    body: `
+      <label class="field"><span>Where are you paying?</span><input name="where" list="wc-list" autocomplete="off" autocapitalize="words" maxlength="80" placeholder="e.g. Trader Joe’s, Uber, Shell"></label>
+      <datalist id="wc-list">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+      <div class="chips" id="wc-cats"></div>
+      <label class="field"><span>Amount (optional)</span><input name="amount" inputmode="decimal" autocomplete="off" placeholder="0.00"></label>
+      <div id="wc-out"></div>`,
+    onMount: (root, sheet) => {
+      const f = sheet.form.elements;
+      setTimeout(() => f.where.focus(), 350);
+      const draw = () => {
+        const text = f.where.value.trim();
+        const merchant = merchantFor(text);
+        const guess = guessRewardCat(text, doc.transactions);
+        // a store it doesn't know is most likely a general purchase; say so and let a tap correct it
+        const unsure = !picked && !guess && !!text;
+        cat = picked || guess || (text ? 'other' : null);
+        const chips = $('#wc-cats', root);
+        chips.innerHTML = REWARD_CATS.map(c => `<button type="button" class="chip${c.id === cat ? ' on' : ''}" data-cat="${c.id}">${c.emoji} ${esc(c.label)}</button>`).join('');
+        const on = $('.chip.on', chips);
+        if (on) chips.scrollLeft += on.getBoundingClientRect().left - chips.getBoundingClientRect().left - 16;
+        const out = $('#wc-out', root);
+        best = null;
+        if (!cat) {
+          out.innerHTML = '<p class="note" style="margin:0 4px">Type the store, or tap a category.</p>';
+          return;
+        }
+        const amount = Math.abs(parseCents(f.amount.value));
+        const cents = Number.isFinite(amount) && amount > 0 ? amount : 0;
+        const ranked = bestCards(m.cards, cat, { today: m.today, txs: doc.transactions, catalog: m.catalog, prefs: m.cardPrefs, merchant });
+        if (cents) ranked.sort((a, b) => (a.blocked ? 1 : 0) - (b.blocked ? 1 : 0) || valueOn(b, cents) - valueOn(a, cents));
+        best = ranked[0];
+        const usable = ranked.filter(r => !r.blocked);
+        // Plenty of places don't take Amex: name the best card on another network.
+        const backup = best.card.network === 'amex' ? usable.find(r => r.card.network && r.card.network !== 'amex') : null;
+        const what = `${merchant && merchant.cat === cat ? `${esc(merchant.name)} · ` : ''}${esc(rewardCatById(cat).label)}`;
+        // credits waiting on your other cards for this purchase (e.g. Uber Cash on the Gold)
+        const elsewhere = usable.filter(r => r !== best && r.perks.length && r.card.id !== best.card.id);
+        out.innerHTML = `
+          <div class="card">
+            <div class="eyebrow">${what}${unsure ? ' · not sure' : !picked && guess && !merchant ? ' · best guess' : ''}</div>
+            ${unsure ? '<div class="small ink2 mt8">Don’t know this store. If it’s a restaurant, grocery store or gas station, tap that category above.</div>' : ''}
+            <div class="between" style="align-items:flex-end;margin-top:8px">
+              <div style="min-width:0"><div class="small ink2">Use</div><div class="big" style="line-height:1.15">${esc(best.card.short)}</div></div>
+              <div style="text-align:right;flex:none"><div class="big good">${cents ? money(valueOn(best, cents), { mask: false }) : pct(best.pct)}</div><div class="small ink2">${cents ? `back on ${money(cents, { mask: false })}` : 'back'}</div></div>
+            </div>
+            ${best.blocked ? `<p class="err mt8" style="margin-bottom:0">${esc(best.blocked)} — none of your cards fit here.</p>` : ''}
+            <div class="small ink2 mt8">${esc(rateText(best.card, best.rate))}${best.note ? ` · ${esc(best.note)}` : ''}</div>
+            ${best.capLeftCents != null && cents > best.capLeftCents ? `<div class="small ink2">Only ${money(best.capLeftCents, { mask: false })} left at this rate; the rest earns less.</div>` : ''}
+            ${best.activate ? `<div class="small mt8" style="font-weight:600">${ICON.alert.replace('<svg', '<svg width="14" height="14" style="display:inline-block;vertical-align:-2px;color:var(--warn-mark)"')} ${esc(best.activate)}</div>` : ''}
+            ${best.perks.map(p => `<div class="small good mt8">+ ${esc(p)}</div>`).join('')}
+            ${elsewhere.map(r => r.perks.map(p => `<div class="small mt8"><span class="good">+ ${esc(p)}</span> <span class="muted">on your ${esc(r.card.short)}</span></div>`).join('')).join('')}
+            ${merchant?.note && merchant.cat === cat ? `<div class="small muted mt8">${esc(merchant.note)}</div>` : ''}
+            ${backup ? `<div class="small mt12" style="padding-top:10px;border-top:1px solid var(--hairline)">If they don’t take Amex: <strong>${esc(backup.card.short)}</strong> · ${cents ? `${money(valueOn(backup, cents), { mask: false })} back` : `${pct(backup.pct)} back`}</div>` : ''}
+          </div>
+          ${ranked.length > 1 ? `<div class="card flush"><div class="rows plain" style="margin:0">${ranked.slice(1).map(r => `<div class="row"${r.blocked ? ' style="opacity:.5"' : ''}>
+            <span class="dot" style="background:${cardDot(m, r.card)};width:10px;height:10px"></span>
+            <span class="row-main"><span class="row-title" style="display:block">${esc(r.card.short)}</span>
+              <span class="row-sub" style="display:block;white-space:normal">${r.blocked ? esc(r.blocked) : esc(rateText(r.card, r.rate))}${r.perks.length && !r.blocked ? ` · ${esc(r.perks[0])}` : ''}</span></span>
+            <span class="row-end"><span class="v">${r.blocked ? '—' : cents ? money(valueOn(r, cents), { mask: false }) : pct(r.pct)}</span></span></div>`).join('')}</div></div>` : ''}
+          <button type="button" class="btn block" id="wc-log">${ICON.plus}Log this purchase${best.blocked ? '' : ` on ${esc(best.card.short)}`}</button>`;
+      };
+      root.addEventListener('click', e => {
+        const chip = e.target.closest('[data-cat]');
+        if (chip) { picked = chip.dataset.cat === cat && picked ? null : chip.dataset.cat; draw(); return; }
+        if (e.target.closest('#wc-log')) {
+          const amount = Math.abs(parseCents(f.amount.value));
+          const detail = { item: f.where.value.trim(), category: SPEND_CAT[cat] || '', cardId: best && !best.blocked ? best.card.id : undefined, cents: Number.isFinite(amount) && amount > 0 ? amount : 0 };
+          sheet.close();
+          setTimeout(() => window.dispatchEvent(new CustomEvent('ledger:new-tx', { detail })), 230);
+        }
+      });
+      f.where.addEventListener('input', () => { picked = null; draw(); });
+      f.amount.addEventListener('input', draw);
+      draw();
+    },
+  });
 }
 
 // ---------------------------------------------------------------- view
@@ -40,6 +133,7 @@ function whichCard(m) {
   const ranked = bestCards(m.cards, cat, { today: m.today, txs: doc.transactions, catalog: m.catalog, prefs: m.cardPrefs });
   return `<div class="card flush">
     <div class="card-h"><h2>Which card should I use?</h2></div>
+    <div style="padding:6px 18px 2px">${payBar()}</div>
     <div class="chips" style="margin:0;padding:2px 18px 8px">${REWARD_CATS.map(c => `<button class="chip${c.id === cat ? ' on' : ''}" data-action="card-cat" data-id="${c.id}">${c.emoji} ${esc(c.label)}</button>`).join('')}</div>
     <div class="rows" style="margin:0">${ranked.map((r, i) => `<button class="row" style="align-items:flex-start" data-action="card-detail" data-id="${esc(r.card.id)}">
       <span class="avatar round" style="${i === 0 ? 'background:var(--ink);color:var(--surface)' : 'color:var(--ink-2)'};font-size:15px;font-weight:700">${i + 1}</span>
@@ -301,6 +395,7 @@ function openCustomCard(m) {
         <label class="field"><span>Rewards</span><select name="program"><option value="cash">Cash back (%)</option><option value="PTS">Points per $</option></select></label>
         <label class="field"><span>Annual fee ($)</span><input name="fee" inputmode="decimal" placeholder="0"></label>
       </div>
+      <label class="field"><span>Network</span><select name="network">${Object.entries(NETWORKS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
       <label class="field" id="cc-pv" hidden><span>What a point is worth (¢)</span><input name="pv" inputmode="decimal" value="1"></label>
       <div class="group-h">Earning rates (leave blank to use the base rate)</div>
       <div class="card">${cats.map(c => `<div class="between" style="padding:4px 0"><span>${c.emoji} ${esc(c.label)}</span><input class="input" name="r_${c.id}" inputmode="decimal" placeholder="${c.id === 'other' ? '1' : ''}" style="width:90px;height:40px;text-align:right"></div>`).join('')}</div>
@@ -325,7 +420,7 @@ function openCustomCard(m) {
       const pv = Number(f.pv.value);
       doc.cards.push({
         id: newId('card'), opened: f.opened.value || undefined, creditsUsed: {}, activated: [],
-        custom: { name, program: f.program.value, annualFeeCents: fee, earn, ...(f.program.value !== 'cash' && pv > 0 ? { pointCents: pv } : {}) },
+        custom: { name, program: f.program.value, network: f.network.value, annualFeeCents: fee, earn, ...(f.program.value !== 'cash' && pv > 0 ? { pointCents: pv } : {}) },
       });
       save(); toast(`Added ${name}`); rerender();
     },
@@ -430,6 +525,7 @@ export function cardAlerts(m) {
 }
 
 export const cardActions = {
+  'which-card': (el, m) => openWhichCard(m),
   'card-cat': el => { ui.cardCat = el.dataset.id; saveUi(); return 'render'; },
   'card-detail': (el, m) => openCardDetail(m, el.dataset.id),
   'card-add': (el, m) => openAddCard(m),

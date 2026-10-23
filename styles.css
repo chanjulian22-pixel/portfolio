@@ -123,6 +123,12 @@ svg { display: block; }
 .icon-btn.spin svg { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* "About to pay?" bar that opens the which-card check */
+.pay-bar { display: flex; align-items: center; gap: 10px; width: 100%; height: 50px; padding: 0 16px; margin-bottom: 12px; border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); color: var(--muted); font-size: 16px; text-align: left; }
+.pay-bar svg { width: 20px; height: 20px; flex: none; color: var(--ink); }
+.pay-bar:active { background: var(--surface-2); }
+.card .pay-bar { background: var(--surface-2); box-shadow: none; border-radius: 12px; margin-bottom: 4px; }
+
 main { padding-top: 4px; padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
 main.enter { animation: fadeUp .22s ease-out; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }

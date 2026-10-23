@@ -9,7 +9,7 @@ import { planView, planActions } from './views/plan.js';
 import { investView, investActions, investmentTotals } from './views/invest.js';
 import { goalsView, goalsActions } from './views/goals.js';
 import { settingsActions, importFile } from './views/settings.js';
-import { cardActions } from './views/cards.js';
+import { cardActions, openWhichCard } from './views/cards.js';
 import { loadCatalog } from './cardsCatalog.js';
 
 const TABS = [
@@ -111,6 +111,8 @@ document.addEventListener('click', e => {
 });
 
 $('#fab').addEventListener('click', () => openTxSheet(model()));
+$('#btn-card').addEventListener('click', () => openWhichCard(model()));
+window.addEventListener('ledger:new-tx', e => openTxSheet(model(), null, e.detail || {}));
 $('#btn-hide').addEventListener('click', () => { ui.hidden = !ui.hidden; saveUi(); render(); });
 $('#btn-refresh').addEventListener('click', () => refreshPrices({ manual: true }));
 $('#btn-settings').addEventListener('click', () => ACTIONS.settings(null, model()));
