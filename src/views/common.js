@@ -9,9 +9,10 @@ export function txRow(t, m) {
   const cat = categoryById(t.category);
   const credit = t.cents < 0;
   const from = t.fundedBy ? m.bucketById[t.fundedBy]?.label : null;
-  const sub = t.work
+  const card = t.cardId ? m.cards?.find(c => c.id === t.cardId)?.short : null;
+  const sub = (t.work
     ? `Work · ${t.reimbursedOn ? `reimbursed ${esc(fmtDate(t.reimbursedOn))}` : 'waiting to be reimbursed'}`
-    : `${esc(cat.label)}${from ? ` · from ${esc(from)}` : ''}`;
+    : `${esc(cat.label)}${from ? ` · from ${esc(from)}` : ''}`) + (card ? ` · ${esc(card)}` : '');
   return `<button class="row" data-action="edit-tx" data-id="${esc(t.id)}">
     <span class="avatar">${t.work ? '💼' : cat.emoji}</span>
     <span class="row-main">

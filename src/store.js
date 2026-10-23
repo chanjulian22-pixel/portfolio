@@ -41,7 +41,7 @@ export function emptyDoc() {
     config: defaultConfig(),
     accounts: defaultAccounts(),
     tickerMeta: {},
-    snapshots: [], contributions: [], transactions: [], loans: [], history: [], dividends: [], purchases: [], dividendChecks: {},
+    snapshots: [], contributions: [], transactions: [], loans: [], history: [], dividends: [], purchases: [], dividendChecks: {}, cards: [], cardPrefs: {},
     dismissed: [],
   };
 }
@@ -101,6 +101,14 @@ export function sanitizeDoc(d) {
     history: rows(d.history, h => isoOk(h.date) && isInt(h.total)),
     dividends: rows(d.dividends, x => x.accountId && isoOk(x.date) && isInt(x.cents)).map(x => ({ id: x.id || newId('d'), ...x })),
     purchases: rows(d.purchases, x => x.accountId && x.ticker && isoOk(x.date) && isInt(x.costCents) && Number.isFinite(x.shares)).map(x => ({ id: x.id || newId('b'), ...x })),
+    // Credit cards you own: catalog id (or custom terms), when opened, credits used, quarterly activations
+    cards: rows(d.cards, x => typeof x.id === 'string' && (x.catalogId || x.custom)).map(x => ({
+      ...x,
+      opened: typeof x.opened === 'string' && /^\d{4}-\d{2}$/.test(x.opened) ? x.opened : undefined,
+      creditsUsed: x.creditsUsed && typeof x.creditsUsed === 'object' ? x.creditsUsed : {},
+      activated: Array.isArray(x.activated) ? x.activated : [],
+    })),
+    cardPrefs: d.cardPrefs && typeof d.cardPrefs === 'object' ? Object.fromEntries(Object.entries(d.cardPrefs).filter(([, v]) => Number.isFinite(v) && v > 0)) : {},
     dividendChecks: d.dividendChecks && typeof d.dividendChecks === 'object' ? Object.fromEntries(Object.entries(d.dividendChecks).filter(([k]) => /^\d{4}-\d{2}$/.test(k))) : {},
     dismissed: Array.isArray(d.dismissed) ? d.dismissed : [],
   };
@@ -174,6 +182,7 @@ export function importJSON(text) {
   if (!next.dividends.length) next.dividends = doc.dividends || [];
   if (!next.purchases.length) next.purchases = doc.purchases || [];
   if (!Object.keys(next.dividendChecks).length) next.dividendChecks = doc.dividendChecks || {};
+  if (!next.cards.length) { next.cards = doc.cards || []; next.cardPrefs = doc.cardPrefs || {}; }
   doc = next;
   save();
   return { transactions: next.transactions.length, buckets: next.config.buckets.length, phases: next.config.phases.length };

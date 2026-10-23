@@ -9,6 +9,8 @@ import { planView, planActions } from './views/plan.js';
 import { investView, investActions, investmentTotals } from './views/invest.js';
 import { goalsView, goalsActions } from './views/goals.js';
 import { settingsActions, importFile } from './views/settings.js';
+import { cardActions } from './views/cards.js';
+import { loadCatalog } from './cardsCatalog.js';
 
 const TABS = [
   { id: 'home', label: 'Home', icon: ICON.home, view: homeView },
@@ -17,7 +19,7 @@ const TABS = [
   { id: 'invest', label: 'Invest', icon: ICON.invest, view: investView },
   { id: 'goals', label: 'Goals', icon: ICON.goals, view: goalsView },
 ];
-const ACTIONS = { ...homeActions, ...spendingActions, ...planActions, ...investActions, ...goalsActions, ...settingsActions };
+const ACTIONS = { ...homeActions, ...spendingActions, ...planActions, ...investActions, ...goalsActions, ...settingsActions, ...cardActions };
 
 function applyTheme() {
   const t = ui.theme;
@@ -158,6 +160,7 @@ document.addEventListener('visibilitychange', () => {
 })();
 applyTheme();
 render();
+loadCatalog().then(ok => { if (ok) render(); }); // card terms (src/data/cards.json), refreshed every launch
 if (doc.migratedFromV1) {
   delete doc.migratedFromV1;
   save();

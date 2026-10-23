@@ -6,6 +6,7 @@ import { isAsset } from '../domain/allocation.js';
 import { txRow, sortTx, notice, bucketColor, deltaHtml } from './common.js';
 import { dividendCheck, pendingBuys, returnsFor } from './invest.js';
 import { outstandingWork } from '../domain/spending.js';
+import { cardAlerts } from './cards.js';
 
 export function homeView(m) {
   if (!m.hasData) return { title: 'Ledger', html: onboarding() };
@@ -216,6 +217,7 @@ export function alerts(m) {
   if (proj?.errors.length) out.push({ tone: 'bad', icon: ICON.alert, text: `Your plan over-commits ${proj.errors.length} paycheck${proj.errors.length > 1 ? 's' : ''} (first ${esc(fmtDate(proj.errors[0].date))}): ${esc(proj.errors[0].message)}`, action: '<button class="btn small" data-action="edit-phases">Fix plan</button>' });
   const missed = proj?.paychecks.filter(p => p.missedMatchCents > 0) || [];
   if (missed.length) out.push({ tone: 'bad', icon: ICON.alert, text: `You’d hit the 401(k) limit early and miss ${money(missed.reduce((a, p) => a + p.missedMatchCents, 0))} of employer match.` });
+  out.push(...cardAlerts(m));
   for (const t of m.config.todos || []) {
     if (doc.dismissed.includes(t.id)) continue;
     out.push({ icon: ICON.flag, text: esc(t.text), action: `<button class="btn small" data-action="dismiss-todo" data-id="${esc(t.id)}">${ICON.check}Done</button>` });

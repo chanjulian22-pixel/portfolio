@@ -8,6 +8,8 @@ import { monthlyBudget, monthSummary } from './domain/spending.js';
 import { nextPayday, paydaysBetween, paydaysInMonth, addDays, addMonths, monthKey, yearOf, parts, daysBetween } from './domain/dates.js';
 import { taxYear } from './domain/taxdata.js';
 import { todayISO } from './ui.js';
+import { catalogState } from './cardsCatalog.js';
+import { resolveCard } from './domain/cards.js';
 
 let cache = null;
 
@@ -133,7 +135,11 @@ function build(today) {
     return out;
   };
 
+  const catalog = catalogState.data;
+  const cards = (doc.cards || []).map(o => resolveCard(o, catalog)).filter(Boolean);
+
   return {
+    catalog, cards, cardPrefs: doc.cardPrefs || {},
     today, config, buckets, bucketById, periods, accountValues, balances, nw, ytd, phaseErrors,
     hasIncome, hasData, projection, planFor, next, upcoming, recentPaydays, unsent, burn, runway, goals, liveTickers,
     quoteTime: latestQuoteTime(liveTickers),

@@ -1,10 +1,12 @@
 import { doc, ui, saveUi, save, newId } from '../store.js';
 import { chart, meter } from '../charts.js';
-import { money, fmtDate, fmtMonth, esc, ICON, openSheet, toast, todayISO, $, $$ } from '../ui.js';
+import { money, pct, fmtDate, fmtMonth, esc, ICON, openSheet, toast, todayISO, $, $$ } from '../ui.js';
 import { monthKey, parts, daysInMonth, addMonths } from '../domain/dates.js';
 import { CATEGORIES, categoryById, suggestCategory, monthlyBudget, outstandingWork } from '../domain/spending.js';
 import { parseCents } from '../domain/money.js';
 import { txRow, sortTx, dateLabel } from './common.js';
+import { cardsView, rankForPurchase } from './cards.js';
+import { rewardCatById } from '../domain/cards.js';
 
 const curMonth = m => {
   const now = monthKey(m.today);
@@ -12,6 +14,12 @@ const curMonth = m => {
 };
 
 export function spendingView(m) {
+  const seg = `<div class="seg" style="margin:2px 0 12px">${[['tx', 'Transactions'], ['cards', 'Cards']].map(([v, l]) => `<button type="button" class="${(ui.spendView || 'tx') === v ? 'on' : ''}" data-action="spend-view" data-v="${v}">${l}</button>`).join('')}</div>`;
+  if (ui.spendView === 'cards') return { title: 'Spending', html: seg + cardsView(m), fab: true, after: () => {
+    // keep the picked category chip in view after re-rendering
+    const on = $('.chips .chip.on'), box = on?.parentElement;
+    if (box) box.scrollLeft += on.getBoundingClientRect().left - box.getBoundingClientRect().left - 18;
+  } };
   const month = curMonth(m);
   const isNow = month === monthKey(m.today);
   const s = m.monthSummary(month);
@@ -24,7 +32,7 @@ export function spendingView(m) {
   const left = budget - s.spent;
   const over = budget > 0 && s.spent > budget;
 
-  let html = `
+  let html = seg + `
     <div class="between" style="margin:2px 0 10px">
       <button class="icon-btn" data-action="spend-month" data-dir="-1" aria-label="Previous month">${ICON.chevL}</button>
       <div style="font-weight:650;font-size:17px">${fmtMonth(month)}</div>
@@ -144,6 +152,7 @@ export function openTxSheet(m, tx = null, defaults = {}) {
         <label class="field"><span>Date</span><input name="date" type="date" value="${esc(t.date)}" ${t.undated ? 'disabled' : ''}></label>
         <label class="field"><span>Paid from</span><select name="fundedBy"><option value="">Spending money</option>${funders.map(b => `<option value="${esc(b.id)}" ${t.fundedBy === b.id ? 'selected' : ''}>${esc(b.label)}</option>`).join('')}</select></label>
       </div>
+      ${m.cards.length ? `<label class="field"><span>Card</span><select name="card"><option value="">Cash, debit or other</option>${m.cards.map(c => `<option value="${esc(c.id)}" ${t.cardId === c.id ? 'selected' : ''}>${esc(c.short)}</option>`).join('')}</select><div class="hint" id="tx-card-hint"></div></label>` : ''}
       <label class="check"><input type="checkbox" name="undated" ${t.undated ? 'checked' : ''}> No exact date (counts toward the month)</label>
       <label class="check"><input type="checkbox" name="work" ${t.work ? 'checked' : ''}> 💼 Work expense — I’ll be reimbursed</label>
       <label class="check" id="tx-reimb" ${t.work && !isNew ? '' : 'hidden'}><input type="checkbox" name="reimbursed" ${t.reimbursedOn ? 'checked' : ''}> Already reimbursed</label>
@@ -161,12 +170,31 @@ export function openTxSheet(m, tx = null, defaults = {}) {
         $('#tx-cats', root).innerHTML = catGrid();
       };
       const toCents = () => Math.abs(parseCents(amount.value));
+      // New purchases default to the card that earns the most on them; edits keep the card recorded.
+      let cardPicked = !isNew;
+      const cardHint = () => {
+        if (!f.card) return;
+        const hint = $('#tx-card-hint', root);
+        if (sign < 0) { hint.innerHTML = ''; return; }
+        const { cat, ranked } = rankForPurchase(m, category, f.what.value);
+        const best = ranked[0];
+        if (!cardPicked) f.card.value = best.card.id;
+        const mine = ranked.find(r => r.card.id === f.card.value);
+        const what = esc(rewardCatById(cat).label.toLowerCase());
+        if (mine === best) {
+          hint.innerHTML = `${ICON.check.replace('<svg', '<svg width="13" height="13" style="vertical-align:-2px"')} Best card for ${what}: ${pct(best.pct)} back${best.perks.length ? ` · ${esc(best.perks[0])}` : ''}${best.activate ? `<br><span class="bad">${esc(best.activate)}</span>` : ''}`;
+        } else {
+          hint.innerHTML = `${esc(best.card.short)} earns more on ${what}: ${pct(best.pct)} back${mine ? ` vs ${pct(mine.pct)}` : ''}.`;
+        }
+      };
+      f.card?.addEventListener('change', () => { cardPicked = true; cardHint(); });
       $('#tx-sign', root).addEventListener('click', e => {
         const b = e.target.closest('[data-s]');
         if (!b) return;
         sign = Number(b.dataset.s);
         $$('#tx-sign button', root).forEach(x => x.classList.toggle('on', x === b));
         if (sign < 0 && !picked) { category = 'credits'; $('#tx-cats', root).innerHTML = catGrid(); } else recat();
+        cardHint();
       });
       $('#tx-cats', root).addEventListener('click', e => {
         const b = e.target.closest('[data-cat]');
@@ -174,8 +202,10 @@ export function openTxSheet(m, tx = null, defaults = {}) {
         category = b.dataset.cat;
         picked = true;
         $('#tx-cats', root).innerHTML = catGrid();
+        cardHint();
       });
-      f.what.addEventListener('input', recat);
+      f.what.addEventListener('input', () => { recat(); cardHint(); });
+      cardHint();
       f.undated.addEventListener('change', () => { f.date.disabled = f.undated.checked; });
       f.work.addEventListener('change', () => { if (!isNew) $('#tx-reimb', root).hidden = !f.work.checked; });
       $('#tx-del', root)?.addEventListener('click', () => {
@@ -203,6 +233,7 @@ export function openTxSheet(m, tx = null, defaults = {}) {
         category: category || suggestCategory(item, cents, doc.transactions),
         fundedBy: work ? undefined : f.fundedBy.value || undefined, undated: undated || undefined,
         work: work || undefined,
+        cardId: f.card ? f.card.value || undefined : t.cardId,
         reimbursedOn: work ? (f.reimbursed.checked ? t.reimbursedOn || todayISO() : undefined) : undefined,
         createdAt: t.createdAt || Date.now(),
       };
@@ -285,6 +316,7 @@ export const spendingActions = {
     ui.spendMonth = next; ui.spendCat = ''; saveUi();
     return 'render';
   },
+  'spend-view': el => { ui.spendView = el.dataset.v; saveUi(); return 'render'; },
   'spend-cat': el => { ui.spendCat = ui.spendCat === el.dataset.id ? '' : el.dataset.id; saveUi(); return 'render'; },
   'edit-tx': (el, m) => { const t = doc.transactions.find(x => x.id === el.dataset.id); if (t) openTxSheet(m, t); },
   'edit-budget': (el, m) => openBudgetSheet(m, el.dataset.month),
