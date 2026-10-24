@@ -378,7 +378,7 @@ function openLoan(m, id) {
       <label class="field"><span>For</span><input name="what" maxlength="60" placeholder="e.g. Groceries"></label>
       <label class="check"><input type="checkbox" name="nw" ${l.includeInNetWorth ? 'checked' : ''}> Count this loan in net worth</label>
       <p class="err" id="l-err"></p>
-      <p class="note">Bought something for ${esc(l.name)} on a card? Log it in Spending and pick “${esc(l.name)}” under <em>Who was it for?</em> — it shows up here and the card gets credit for it.</p>
+      <p class="note">Bought something for ${esc(l.name)} on a card? Log it in Spending and set <em>Paid from</em> to “${esc(l.direction === 'i-owe' ? `${l.name}’s loan` : `${l.name} (they’ll pay me back)`)}” — it shows up here and the card gets credit for it.</p>
       <div class="group-h">History</div>
       <div class="card flush"><div class="rows plain" style="margin:0">${history.map(h => h.tx ? `<button type="button" class="row" data-action="edit-tx" data-id="${esc(h.tx.id)}"><span class="row-main"><span class="row-title" style="display:block">${esc(h.tx.item)}</span><span class="row-sub" style="display:block">${esc(fmtDate(h.tx.date, { year: true }))} · from Spending${h.card ? ` · ${esc(h.card)}` : ''}</span></span>
         <span class="row-end"><span class="v ${h.cents < 0 ? 'good' : ''}">${money(h.cents, { sign: true, mask: false })}</span></span></button>`

@@ -105,7 +105,7 @@ export function plannedFor(phase, bucketId, index) {
  * @param {Record<string, number>} [p.ytd] contributions so far this calendar year, for limited buckets
  * @param {Record<string, number>} [p.targetOverrides] e.g. a target raised by a future event
  */
-export function allocatePaycheck({ takeHomeCents, index, date, buckets, phase, sweeps = [], balances = {}, ytd = {}, targetOverrides = {} }) {
+export function allocatePaycheck({ takeHomeCents, index, date, buckets, phase, sweeps = [], balances = {}, ytd = {}, targetOverrides = {}, extra = {} }) {
   const allocatable = buckets.filter(isAllocatable);
   const residuals = allocatable.filter(b => b.isResidual);
   if (residuals.length !== 1) throw new AllocationError('Exactly one bucket must receive the residual.', { residuals: residuals.map(b => b.id) });
@@ -146,7 +146,7 @@ export function allocatePaycheck({ takeHomeCents, index, date, buckets, phase, s
   for (const b of allocatable) {
     if (b === residual) continue;
     planned[b.id] = plannedFor(phase, b.id, index);
-    place(b.id, planned[b.id]);
+    place(b.id, planned[b.id] + (extra[b.id] || 0)); // `extra`: catch-up owed from an earlier paycheck
   }
 
   const committed = sum(allocatable.filter(b => b !== residual).map(b => amounts[b.id]));
@@ -163,6 +163,7 @@ export function allocatePaycheck({ takeHomeCents, index, date, buckets, phase, s
     bucketId: b.id,
     cents: amounts[b.id],
     plannedCents: b === residual ? null : planned[b.id],
+    catchUpCents: b === residual ? 0 : extra[b.id] || 0,
     residual: b === residual,
   }));
   const total = sum(lines.map(l => l.cents));

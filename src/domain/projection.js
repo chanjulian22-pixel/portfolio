@@ -17,8 +17,10 @@ const monthlyRate = r => (r > 0 ? Math.pow(1 + r, 1 / 12) - 1 : 0);
  * @param {Record<string, number>} [p.ytd] contributions so far this year for limited / pre-tax buckets
  * @param {Record<string, Record<string, number>>} [p.sentAhead] transfers already made for upcoming
  *   paydays ({ payday: { bucketId: cents } }). That money is already in `balances`, so it isn't added again.
+ * @param {Record<string, number>} [p.catchUp] amounts an earlier paycheck still owes a bucket (raised
+ *   after it was sent); the next paycheck sends them before the residual gets anything.
  */
-export function project({ config, startDate, endDate, balances, ytd = {}, sentAhead = {} }) {
+export function project({ config, startDate, endDate, balances, ytd = {}, sentAhead = {}, catchUp = {} }) {
   const buckets = config.buckets;
   const assets = buckets.filter(isAsset);
   const periods = config.profile?.payPeriodsPerYear || 24;
@@ -34,6 +36,7 @@ export function project({ config, startDate, endDate, balances, ytd = {}, sentAh
   const paychecks = [];
   const errors = [];
   const reached = new Set();
+  let owed = catchUp;
 
   const total = obj => Object.values(obj).reduce((a, b) => a + b, 0);
   const snapshot = date => ({ date, total: total(bal), principal: total(principal), growth: total(growth), byBucket: { ...bal }, principalByBucket: { ...principal } });
@@ -99,8 +102,9 @@ export function project({ config, startDate, endDate, balances, ytd = {}, sentAh
       try {
         result = allocatePaycheck({
           takeHomeCents: pay.takeHomeCents, index: p.index, date: p.date, buckets, phase,
-          sweeps: config.sweeps, balances: bal, ytd: ytdNow, targetOverrides,
+          sweeps: config.sweeps, balances: bal, ytd: ytdNow, targetOverrides, extra: owed,
         });
+        owed = {};
       } catch (err) {
         if (!(err instanceof AllocationError)) throw err;
         errors.push({ date: p.date, message: err.message });

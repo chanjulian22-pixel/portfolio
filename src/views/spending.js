@@ -7,6 +7,7 @@ import { parseCents } from '../domain/money.js';
 import { txRow, sortTx, dateLabel } from './common.js';
 import { cardsView, rankForPurchase } from './cards.js';
 import { rewardCatById } from '../domain/cards.js';
+import { loanBalance } from '../domain/balances.js';
 
 const curMonth = m => {
   const now = monthKey(m.today);
@@ -136,7 +137,15 @@ export function openTxSheet(m, tx = null, defaults = {}) {
   let category = t.category || '';
   let picked = !!t.category;
   const items = [...new Set(sortTx(doc.transactions).map(x => x.item))].slice(0, 80);
-  const funders = m.buckets.filter(b => b.kind === 'revolving' || (b.assetClass === 'cash' && b.kind !== 'pretax'));
+  // Where the money came from: the spending budget, a fund meant to be spent (Travel), a loan, or work.
+  const funds = m.buckets.filter(b => b.kind === 'revolving' || b.id === t.fundedBy);
+  const sources = [
+    ['', 'Spending money'],
+    ...funds.map(b => [b.id, b.label]),
+    ...m.loans.map(l => [`loan:${l.id}`, l.direction === 'i-owe' ? `${l.name}’s loan` : `${l.name} (they’ll pay me back)`]),
+    ['work', 'Work (I’ll be reimbursed)'],
+  ];
+  const paidFrom = t.work ? 'work' : t.loanId ? `loan:${t.loanId}` : t.fundedBy || '';
 
   const catGrid = () => CATEGORIES.map(c => `<button type="button" data-cat="${c.id}" class="${c.id === category ? 'on' : ''}"><span>${c.emoji}</span>${esc(c.label.split(' ')[0])}</button>`).join('');
   openSheet({
@@ -148,19 +157,11 @@ export function openTxSheet(m, tx = null, defaults = {}) {
       <label class="field"><span>What was it?</span><input name="what" list="tx-items" autocomplete="off" autocapitalize="sentences" maxlength="80" placeholder="e.g. Chipotle" value="${esc(t.item)}"></label>
       <datalist id="tx-items">${items.map(i => `<option value="${esc(i)}">`).join('')}</datalist>
       <div class="field"><span>Category</span><div class="cat-grid" id="tx-cats">${catGrid()}</div></div>
-      <div class="grid2">
-        <label class="field"><span>Date</span><input name="date" type="date" value="${esc(t.date)}" ${t.undated ? 'disabled' : ''}></label>
-        <label class="field"><span>Paid from</span><select name="fundedBy" ${t.work || t.loanId ? 'disabled' : ''}><option value="">Spending money</option>${funders.map(b => `<option value="${esc(b.id)}" ${t.fundedBy === b.id ? 'selected' : ''}>${esc(b.label)}</option>`).join('')}</select></label>
-      </div>
-      ${m.cards.length ? `<label class="field"><span>Card</span><select name="card"><option value="">Cash, debit or other</option>${m.cards.map(c => `<option value="${esc(c.id)}" ${t.cardId === c.id ? 'selected' : ''}>${esc(c.short)}</option>`).join('')}</select><div class="hint" id="tx-card-hint"></div></label>` : ''}
+      <label class="field"><span>Date</span><input name="date" type="date" value="${esc(t.date)}" ${t.undated ? 'disabled' : ''}></label>
       <label class="check"><input type="checkbox" name="undated" ${t.undated ? 'checked' : ''}> No exact date (counts toward the month)</label>
-      <label class="field"><span>Who was it for?</span><select name="for">
-        <option value="">Me</option>
-        <option value="work" ${t.work ? 'selected' : ''}>💼 Work — I’ll be reimbursed</option>
-        ${doc.loans.map(l => `<option value="loan:${esc(l.id)}" ${t.loanId === l.id ? 'selected' : ''}>${esc(l.name)} — ${l.direction === 'i-owe' ? 'take it off what I owe' : 'add it to what they owe me'}</option>`).join('')}
-      </select></label>
+      ${m.cards.length ? `<label class="field"><span>Card</span><select name="card"><option value="">Cash, debit or other</option>${m.cards.map(c => `<option value="${esc(c.id)}" ${t.cardId === c.id ? 'selected' : ''}>${esc(c.short)}</option>`).join('')}</select><div class="hint" id="tx-card-hint"></div></label>` : ''}
+      <label class="field"><span>Paid from</span><select name="paidFrom">${sources.map(([v, label]) => `<option value="${esc(v)}" ${v === paidFrom ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select><div class="hint" id="tx-from-hint"></div></label>
       <label class="check" id="tx-reimb" ${t.work && !isNew ? '' : 'hidden'}><input type="checkbox" name="reimbursed" ${t.reimbursedOn ? 'checked' : ''}> Already reimbursed</label>
-      <p class="note">Paying from a fund like Travel takes it out of that fund’s balance instead of your spending budget. Work expenses and things you buy for someone else don’t count as your spending — work is tracked until you’re paid back, and a purchase for someone you owe comes off the loan. The card still earns its rewards either way.</p>
       <p class="err" id="tx-err"></p>
       ${isNew ? '' : `<button type="button" class="btn danger block mt16" id="tx-del">${ICON.trash}Delete transaction</button>`}`,
     onMount: (root, sheet) => {
@@ -214,10 +215,27 @@ export function openTxSheet(m, tx = null, defaults = {}) {
       if (isNew && t.item && !picked) recat();
       cardHint();
       f.undated.addEventListener('change', () => { f.date.disabled = f.undated.checked; });
-      f.for.addEventListener('change', () => {
-        $('#tx-reimb', root).hidden = isNew || f.for.value !== 'work';
-        f.fundedBy.disabled = !!f.for.value; // work and loan purchases don't come out of a fund
-      });
+      // Say what "Paid from" does with this purchase (for a loan, the balance before and after)
+      const fromHint = () => {
+        const v = f.paidFrom.value;
+        const c = toCents();
+        const amt = Number.isFinite(c) ? c * sign : 0;
+        let text = 'Counts toward this month’s spending budget.';
+        if (v === 'work') text = 'Not your spending — it waits under “Work owes you” until you’re reimbursed.';
+        else if (v.startsWith('loan:')) {
+          const l = m.loans.find(x => x.id === v.slice(5));
+          const before = loanBalance(l, doc.transactions.filter(x => x.id !== t.id));
+          const after = before + (l.direction === 'owed-to-me' ? amt : -amt);
+          text = l.direction === 'i-owe'
+            ? `Comes off what you owe ${l.name}: ${money(before)} → ${money(after)}. Not your spending.`
+            : `Adds to what ${l.name} owes you: ${money(before)} → ${money(after)}. Not your spending.`;
+        } else if (v) text = `Comes out of ${m.bucketById[v]?.label || 'that fund'}, not your spending budget.`;
+        $('#tx-from-hint', root).textContent = text;
+      };
+      f.paidFrom.addEventListener('change', () => { $('#tx-reimb', root).hidden = isNew || f.paidFrom.value !== 'work'; fromHint(); });
+      amount.addEventListener('input', fromHint);
+      $('#tx-sign', root).addEventListener('click', fromHint);
+      fromHint();
       $('#tx-del', root)?.addEventListener('click', () => {
         if (!confirm(`Delete “${t.item}”?`)) return;
         doc.transactions = doc.transactions.filter(x => x.id !== t.id);
@@ -236,13 +254,14 @@ export function openTxSheet(m, tx = null, defaults = {}) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return err('Pick a date.');
       const item = f.what.value.trim() || 'Untitled';
       const cents = c * sign;
-      const work = f.for.value === 'work';
-      const loanId = f.for.value.startsWith('loan:') ? f.for.value.slice(5) : undefined;
+      const from = f.paidFrom.value;
+      const work = from === 'work';
+      const loanId = from.startsWith('loan:') ? from.slice(5) : undefined;
       if (work && sign < 0) return err('No need to log the reimbursement itself — mark the work expense as reimbursed instead.');
       const rec = {
         ...t, id: t.id || newId('t'), date, cents, item,
         category: category || suggestCategory(item, cents, doc.transactions),
-        fundedBy: work || loanId ? undefined : f.fundedBy.value || undefined, undated: undated || undefined,
+        fundedBy: !work && !loanId && from ? from : undefined, undated: undated || undefined,
         work: work || undefined, loanId,
         cardId: f.card ? f.card.value || undefined : t.cardId,
         reimbursedOn: work ? (f.reimbursed.checked ? t.reimbursedOn || todayISO() : undefined) : undefined,

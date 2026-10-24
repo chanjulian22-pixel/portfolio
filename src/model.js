@@ -51,7 +51,7 @@ function build(today) {
   const projection = months => {
     if (!hasIncome) return null;
     if (!projections[months]) {
-      projections[months] = project({ config, startDate: today, endDate: addMonths(today, months), balances: centsOf(balances), ytd, sentAhead });
+      projections[months] = project({ config, startDate: today, endDate: addMonths(today, months), balances: centsOf(balances), ytd, sentAhead, catchUp });
     }
     return projections[months];
   };
@@ -85,6 +85,20 @@ function build(today) {
       return { ...base, error: e.message };
     }
   };
+
+  // Raised a paycheck this month after its transfers went out (e.g. more spending money)? What it
+  // still owes a bucket comes out of the next paycheck, so the plan doesn't quietly invest it.
+  // Lines never sent at all stay on the "not marked as sent" reminder instead.
+  const catchUp = {};
+  for (const pd of paydaysBetween(today.slice(0, 8) + '01', addDays(today, -1))) {
+    const plan = planFor(pd);
+    if (!plan.lines || !plan.phase || plan.extended) continue;
+    for (const l of plan.lines) {
+      const done = plan.done[l.bucketId] || 0;
+      if (!l.residual && done > 0) catchUp[l.bucketId] = (catchUp[l.bucketId] || 0) + l.cents - done;
+    }
+  }
+  for (const id of Object.keys(catchUp)) if (catchUp[id] <= 0) delete catchUp[id];
 
   const next = nextPayday(today);
   const recentPaydays = paydaysBetween(addDays(today, -62), addDays(today, -1));

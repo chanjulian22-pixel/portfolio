@@ -60,13 +60,14 @@ export function planView(m) {
         const notes = (plan.notices || []).filter(n => n.bucketId === l.bucketId);
         const inbound = (plan.notices || []).filter(n => n.to === l.bucketId);
         const sub = l.residual ? 'Gets whatever is left' : b.purpose || '';
-        const diff = done > 0 && done !== l.cents ? `sent ${money(done)}` : l.plannedCents != null && l.plannedCents !== l.cents ? `planned ${money(l.plannedCents)}` : '';
+        const diff = done > 0 && done !== l.cents ? `sent ${money(done)}` : !l.catchUpCents && l.plannedCents != null && l.plannedCents !== l.cents ? `planned ${money(l.plannedCents)}` : '';
         return `<div class="legend-row">
           <span class="sw" style="background:${bucketColor(b)}"></span>
           <button class="lbl" style="text-align:left" data-action="edit-sent" data-date="${sel.date}" data-bucket="${esc(b.id)}" data-cents="${l.cents}">
             ${esc(b.label)}<small>${esc(sub)}</small>
             ${notes.map(n => `<small style="color:var(--ink-2)">↳ ${n.reason === 'limit' ? 'Maxed for the year' : `At its ${money(n.capCents, { whole: true })} target`} — ${money(n.cents)} to ${esc(bucket(n.to)?.label)}</small>`).join('')}
             ${inbound.map(n => `<small style="color:var(--ink-2)">↳ includes ${money(n.cents)} from ${esc(bucket(n.bucketId)?.label)}</small>`).join('')}
+            ${l.catchUpCents ? `<small style="color:var(--ink-2)">↳ includes ${money(l.catchUpCents)} catch-up — an earlier paycheck this month was raised after it was sent</small>` : ''}
             ${doc.contributions.some(c => c.paycheck === sel.date && c.bucketId === l.bucketId && c.pendingBuy) ? '<small style="color:var(--ink-2)">↳ buy not logged yet — tap Log buy in Invest</small>' : ''}
           </button>
           <span class="val">${money(l.cents)}${diff ? `<small>${esc(diff)}</small>` : ''}</span>
