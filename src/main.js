@@ -11,6 +11,7 @@ import { goalsView, goalsActions } from './views/goals.js';
 import { settingsActions, importFile } from './views/settings.js';
 import { cardActions, openWhichCard } from './views/cards.js';
 import { loadCatalog } from './cardsCatalog.js';
+import { DEMO } from './demo.js';
 
 const TABS = [
   { id: 'home', label: 'Home', icon: ICON.home, view: homeView },
@@ -39,7 +40,7 @@ function render(opts = {}) {
   const out = tab.view(m);
   $('#title').textContent = out.title;
   const main = $('#main');
-  main.innerHTML = out.html;
+  main.innerHTML = (DEMO ? '<div class="demo-banner">Demo · made-up numbers · nothing you change is saved</div>' : '') + out.html;
   if (lastTab !== tab.id) {
     main.classList.remove('enter');
     void main.offsetWidth;
@@ -160,6 +161,7 @@ document.addEventListener('visibilitychange', () => {
   }
   if (changed) save();
 })();
+if (DEMO) document.title = 'Ledger · demo';
 applyTheme();
 render();
 loadCatalog().then(ok => { if (ok) render(); }); // card terms (src/data/cards.json), refreshed every launch

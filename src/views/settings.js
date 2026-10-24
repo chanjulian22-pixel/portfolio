@@ -7,6 +7,7 @@ import { addDays, addMonths, yearOf } from '../domain/dates.js';
 import { parseCents } from '../domain/money.js';
 import { loanBalance } from '../domain/balances.js';
 import { bucketColor } from './common.js';
+import { DEMO } from '../demo.js';
 
 const rerender = () => window.dispatchEvent(new Event('ledger:render'));
 const dollars = c => (Number.isInteger(c) ? (c / 100).toFixed(2) : '');
@@ -130,10 +131,11 @@ function bucketsBody() {
 }
 
 function openBucket(m, id) {
-  const used = new Set(doc.config.buckets.map(b => b.color));
-  const free = [1, 2, 3, 4, 5, 6, 7, 8].find(c => !used.has(c));
+  // A new bucket takes an unused chart colour, or shares the least-used one past eight buckets.
+  const uses = c => doc.config.buckets.filter(b => b.color === c).length;
+  const free = [1, 2, 3, 4, 5, 6, 7, 8].sort((x, y) => uses(x) - uses(y) || x - y)[0];
   const b = doc.config.buckets.find(x => x.id === id) || { id: '', label: '', kind: 'capped', assetClass: 'cash', color: free, expectedAnnualReturn: 0.04, purpose: '' };
-  if (!b.id && !free) { toast('Up to 8 buckets — combine some first.', true); return; }
+  if (!b.id && doc.config.buckets.length >= 12) { toast('Up to 12 buckets — combine some first.', true); return; }
   const sweep = doc.config.sweeps.find(s => s.watch === b.id);
   const others = doc.config.buckets.filter(x => x.id !== b.id && isAllocatable(x) && x.kind !== 'expense');
   openSheet({
@@ -435,6 +437,7 @@ async function exportBackup() {
 }
 
 export async function importFile(file) {
+  if (DEMO) { toast('Importing is off in the demo — open the app without ?demo to use your own data.'); return; }
   const text = await file.text();
   let summary;
   try {
@@ -461,6 +464,7 @@ export async function importFile(file) {
 }
 
 function erase() {
+  if (DEMO) { location.reload(); return; } // the demo starts over; real data is never touched
   if (!confirm('Erase all Ledger data on this phone? Export a backup first if you might want it.')) return;
   if (!confirm('Really erase everything? This can’t be undone.')) return;
   for (const k of ['ledger.v2', 'ledger.ui', 'pt.state.v1', 'pt.quotes.v1', 'pt.ui.v1']) { try { localStorage.removeItem(k); } catch { /* ignore */ } }

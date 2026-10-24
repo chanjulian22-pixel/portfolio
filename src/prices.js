@@ -1,13 +1,16 @@
 // Live quotes from Finnhub's free /quote endpoint. Only ticker symbols and your key leave the phone.
+import { DEMO, demoQuotes } from './demo.js';
+
 const QUOTES_KEY = 'pt.quotes.v1';   // shared with the first version of the app
 const KEY_KEY = 'pt.finnhubKey';
 
 const read = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
-const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage full or blocked */ } };
+const write = (k, v) => { if (DEMO) return; try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage full or blocked */ } };
 
 export const prices = {
-  quotes: read(QUOTES_KEY, {}) || {},
-  key: String(read(KEY_KEY, '') || ''),
+  // the demo uses fixed sample prices and never touches your saved key
+  quotes: DEMO ? demoQuotes() : read(QUOTES_KEY, {}) || {},
+  key: DEMO ? '' : String(read(KEY_KEY, '') || ''),
   lastRefresh: 0,
   refreshing: false,
   keyRejected: false,

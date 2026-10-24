@@ -1,13 +1,15 @@
 // Persistence. Everything lives in this browser's localStorage on your phone — nothing is sent anywhere
 // except ticker symbols to Finnhub for prices. Export a backup from Settings now and then.
 import { parseCents } from './domain/money.js';
+import { DEMO, demoDoc } from './demo.js';
 
 const KEY = 'ledger.v2';
 const UI_KEY = 'ledger.ui';
 const V1_STATE = 'pt.state.v1';
 
 const read = (k, fallback) => { try { const v = localStorage.getItem(k); return v == null ? fallback : JSON.parse(v); } catch { return fallback; } };
-const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } };
+// The demo (?demo) runs on made-up data in memory: it never writes to this device's storage.
+const write = (k, v) => { if (DEMO) return true; try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } };
 
 export const newId = (p = 'x') => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
@@ -134,6 +136,7 @@ function migrateV1(doc) {
 }
 
 function load() {
+  if (DEMO) return sanitizeDoc(demoDoc());
   const saved = read(KEY, null);
   if (saved) {
     try { return sanitizeDoc(saved); } catch { /* fall through to a fresh doc */ }
@@ -241,7 +244,7 @@ export function importJSON(text) {
 }
 
 // ---------- UI preferences (per device, non-critical) ----------
-export const ui = Object.assign({ tab: 'home', hidden: false, theme: 'system', horizon: 24, goalHorizon: 24 }, read(UI_KEY, {}));
+export const ui = Object.assign({ tab: 'home', hidden: false, theme: 'system', horizon: 24, goalHorizon: 24 }, DEMO ? {} : read(UI_KEY, {}));
 export const saveUi = () => write(UI_KEY, ui);
 
 export { parseCents };
