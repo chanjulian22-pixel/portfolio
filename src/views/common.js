@@ -10,8 +10,10 @@ export function txRow(t, m) {
   const credit = t.cents < 0;
   const from = t.fundedBy ? m.bucketById[t.fundedBy]?.label : null;
   const card = t.cardId ? m.cards?.find(c => c.id === t.cardId)?.short : null;
+  const loan = t.loanId ? m.loans?.find(l => l.id === t.loanId) : null;
   const sub = (t.work
     ? `Work · ${t.reimbursedOn ? `reimbursed ${esc(fmtDate(t.reimbursedOn))}` : 'waiting to be reimbursed'}`
+    : loan ? `For ${esc(loan.name)} · ${loan.direction === 'i-owe' ? 'off what you owe' : 'they owe you'}`
     : `${esc(cat.label)}${from ? ` · from ${esc(from)}` : ''}`) + (card ? ` · ${esc(card)}` : '');
   return `<button class="row" data-action="edit-tx" data-id="${esc(t.id)}">
     <span class="avatar">${t.work ? '💼' : cat.emoji}</span>
@@ -19,7 +21,7 @@ export function txRow(t, m) {
       <span class="row-title" style="display:block">${esc(t.item)}</span>
       <span class="row-sub" style="display:block">${sub}</span>
     </span>
-    <span class="row-end"><span class="v${credit ? ' good' : t.work ? ' muted' : ''}" style="display:block">${credit ? '+' + money(-t.cents) : money(t.cents)}</span></span>
+    <span class="row-end"><span class="v${credit ? ' good' : t.work || loan ? ' muted' : ''}" style="display:block">${credit ? '+' + money(-t.cents) : money(t.cents)}</span></span>
   </button>`;
 }
 

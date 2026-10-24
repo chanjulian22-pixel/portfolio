@@ -33,7 +33,7 @@ function build(today) {
   const accountValues = Object.fromEntries(doc.accounts.map(a => [a.id, accountValue(a, doc.tickerMeta)]));
   const ledgerAt = asOf => bucketBalances({ config, snapshots: doc.snapshots, contributions: doc.contributions, transactions: doc.transactions, accountValues, asOf });
   const balances = ledgerAt(today);
-  const nw = netWorth(balances, buckets, doc.loans);
+  const nw = netWorth(balances, buckets, doc.loans, doc.transactions);
   const ytd = ytdAll({ config, contributions: doc.contributions, asOf: today });
   const phaseErrors = validatePhases(config.phases);
   const hasIncome = config.incomes.some(i => i.annualGrossCents > 0);
@@ -146,7 +146,7 @@ function build(today) {
     monthBudget: month => monthlyBudget(config, month),
     monthSummary: month => monthSummary(doc.transactions, month),
     ledgerAt,
-    loans: doc.loans.map(l => ({ ...l, balance: loanBalance(l) })),
+    loans: doc.loans.map(l => ({ ...l, balance: loanBalance(l, doc.transactions) })),
   };
 }
 

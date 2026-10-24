@@ -73,7 +73,7 @@ export function monthlyBudget(config, month) {
  * Transactions that count against the spending budget: not ones paid out of another bucket (like
  * travel), and not work expenses your employer pays back.
  */
-export const countsAsSpending = t => !t.fundedBy && !t.work;
+export const countsAsSpending = t => !t.fundedBy && !t.work && !t.loanId;
 
 /** Work expenses you've paid but haven't been reimbursed for yet, oldest first. */
 export function outstandingWork(transactions = []) {

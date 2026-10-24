@@ -337,8 +337,8 @@ export function openLoans(m) {
 
 function loansBody() {
   return `<div class="card flush"><div class="rows plain" style="margin:0">${doc.loans.map(l => `<button type="button" class="row" data-action="loan" data-id="${esc(l.id)}">
-      <span class="avatar round">🤝</span><span class="row-main"><span class="row-title" style="display:block">${esc(l.name)}</span><span class="row-sub" style="display:block">${l.direction === 'i-owe' ? 'You owe' : 'Owes you'} · ${l.entries.length} entries${l.includeInNetWorth ? ' · in net worth' : ''}</span></span>
-      <span class="row-end"><span class="v">${money(loanBalance(l))}</span></span></button>`).join('') || '<div class="empty">No loans.</div>'}</div></div>
+      <span class="avatar round">🤝</span><span class="row-main"><span class="row-title" style="display:block">${esc(l.name)}</span><span class="row-sub" style="display:block">${l.direction === 'i-owe' ? 'You owe' : 'Owes you'} · ${l.entries.length + doc.transactions.filter(t => t.loanId === l.id).length} entries${l.includeInNetWorth ? ' · in net worth' : ''}</span></span>
+      <span class="row-end"><span class="v">${money(loanBalance(l, doc.transactions))}</span></span></button>`).join('') || '<div class="empty">No loans.</div>'}</div></div>
       <button type="button" class="btn block mt12" data-action="loan" data-id="">${ICON.plus}New loan</button>`;
 }
 
@@ -362,19 +362,28 @@ function openLoan(m, id) {
     });
     return;
   }
-  const entries = [...l.entries].reverse();
+  // The loan's own entries plus purchases logged in Spending for this person, newest first
+  // (entries brought over from the spreadsheet have no date and stay at the bottom).
+  const sign = l.direction === 'owed-to-me' ? 1 : -1;
+  const history = [
+    ...doc.transactions.filter(t => t.loanId === l.id).map(t => ({ tx: t, date: t.date, cents: sign * t.cents, card: m.cards.find(c => c.id === t.cardId)?.short })),
+    ...l.entries.map((e, i) => ({ e, date: e.date || '', i, cents: e.cents })),
+  ].sort((a, b) => b.date.localeCompare(a.date) || (b.i ?? 0) - (a.i ?? 0));
   openSheet({
     title: l.name, submitLabel: 'Add',
     body: `
-      <div style="text-align:center;padding:8px 0 4px"><div class="eyebrow">${l.direction === 'i-owe' ? 'You owe' : 'Owes you'}</div><div class="hero-value" style="font-size:38px">${money(loanBalance(l), { mask: false })}</div></div>
+      <div style="text-align:center;padding:8px 0 4px"><div class="eyebrow">${l.direction === 'i-owe' ? 'You owe' : 'Owes you'}</div><div class="hero-value" style="font-size:38px">${money(loanBalance(l, doc.transactions), { mask: false })}</div></div>
       <div class="seg" id="kind"><button type="button" class="on" data-k="-1">${l.direction === 'i-owe' ? 'Paid back / covered' : 'They paid back'}</button><button type="button" data-k="1">${l.direction === 'i-owe' ? 'Borrowed more' : 'Lent more'}</button></div>
       <div class="amount-input"><span>$</span><input name="amount" inputmode="decimal" placeholder="0.00"></div>
       <label class="field"><span>For</span><input name="what" maxlength="60" placeholder="e.g. Groceries"></label>
       <label class="check"><input type="checkbox" name="nw" ${l.includeInNetWorth ? 'checked' : ''}> Count this loan in net worth</label>
       <p class="err" id="l-err"></p>
+      <p class="note">Bought something for ${esc(l.name)} on a card? Log it in Spending and pick “${esc(l.name)}” under <em>Who was it for?</em> — it shows up here and the card gets credit for it.</p>
       <div class="group-h">History</div>
-      <div class="card flush"><div class="rows plain" style="margin:0">${entries.map(e => `<div class="row"><span class="row-main"><span class="row-title" style="display:block">${esc(e.item)}</span><span class="row-sub" style="display:block">${e.date ? esc(fmtDate(e.date, { year: true })) : 'from spreadsheet'}</span></span>
-        <span class="row-end"><span class="v ${e.cents < 0 ? 'good' : ''}">${money(e.cents, { sign: true, mask: false })}</span></span><button type="button" class="icon-btn" data-del="${esc(e.id)}" aria-label="Delete entry" style="width:32px;height:32px;color:var(--muted)">${ICON.x}</button></div>`).join('')}</div></div>
+      <div class="card flush"><div class="rows plain" style="margin:0">${history.map(h => h.tx ? `<button type="button" class="row" data-action="edit-tx" data-id="${esc(h.tx.id)}"><span class="row-main"><span class="row-title" style="display:block">${esc(h.tx.item)}</span><span class="row-sub" style="display:block">${esc(fmtDate(h.tx.date, { year: true }))} · from Spending${h.card ? ` · ${esc(h.card)}` : ''}</span></span>
+        <span class="row-end"><span class="v ${h.cents < 0 ? 'good' : ''}">${money(h.cents, { sign: true, mask: false })}</span></span></button>`
+      : `<div class="row"><span class="row-main"><span class="row-title" style="display:block">${esc(h.e.item)}</span><span class="row-sub" style="display:block">${h.e.date ? esc(fmtDate(h.e.date, { year: true })) : 'from spreadsheet'}</span></span>
+        <span class="row-end"><span class="v ${h.cents < 0 ? 'good' : ''}">${money(h.cents, { sign: true, mask: false })}</span></span><button type="button" class="icon-btn" data-del="${esc(h.e.id)}" aria-label="Delete entry" style="width:32px;height:32px;color:var(--muted)">${ICON.x}</button></div>`).join('') || '<div class="empty">Nothing yet.</div>'}</div></div>
       <button type="button" class="btn danger block mt16" id="loan-del">${ICON.trash}Delete loan</button>`,
     onMount: (root, sheet) => {
       $('#kind', root).addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (!b) return; $$('#kind button', root).forEach(x => x.classList.toggle('on', x === b)); });

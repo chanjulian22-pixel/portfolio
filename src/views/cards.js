@@ -6,6 +6,7 @@ import { money, pct, fmtDate, fmtMonth, esc, ICON, openSheet, toast, $, $$ } fro
 import {
   REWARD_CATS, rewardCatById, rewardCatFor, bestCards, feeStatus, creditUsedNow, periodKey, periodLabel, periodEnd,
   perYear, pointCents, simulateCard, resolveCard, quarterOf, MERCHANTS, NETWORKS, merchantFor, guessRewardCat, valueOn,
+  bonusStatus, creditLive, byBest,
 } from '../domain/cards.js';
 import { parseCents } from '../domain/money.js';
 import { addMonths, monthsBetween, daysBetween } from '../domain/dates.js';
@@ -16,6 +17,39 @@ const rateText = (card, rate) => card.program === 'cash' ? `${+rate}% back` : `$
 const cardDot = (m, card) => `var(--s${(Math.max(0, m.cards.findIndex(c => c.id === card.id)) % 8) + 1})`;
 const owned = id => doc.cards.find(c => c.id === id);
 const dollars = c => (c % 100 ? (c / 100).toFixed(2) : String(c / 100));
+const bonusLine = b => `Welcome bonus: ${money(b.leftCents, { whole: true, mask: false })} to go by ${fmtDate(b.by)}`;
+
+/** Welcome-bonus fields for the add-card and card sheets. `defaults` come from the card's usual offer. */
+function bonusFields(b, defaults) {
+  const spend = b?.spendCents ?? defaults?.spendCents;
+  return `<label class="check"><input type="checkbox" name="bonusOn" ${b ? 'checked' : ''}> Working toward a welcome bonus</label>
+    <div id="bonus-f" ${b ? '' : 'hidden'}>
+      <div class="grid2">
+        <label class="field"><span>Spend ($)</span><input name="bSpend" inputmode="decimal" value="${spend ? dollars(spend) : ''}" placeholder="6000"></label>
+        <label class="field"><span>By</span><input name="bBy" type="date" value="${esc(b?.by || defaults?.by || '')}"></label>
+      </div>
+      <div class="grid2">
+        <label class="field"><span>Bonus points (optional)</span><input name="bPoints" inputmode="numeric" value="${b?.points || ''}" placeholder="e.g. 100000"></label>
+        <label class="field"><span>Spent, not logged here ($)</span><input name="bExtra" inputmode="decimal" value="${b?.extraCents ? dollars(b.extraCents) : ''}" placeholder="0"></label>
+      </div>
+      <div class="hint" style="margin:-4px 2px 10px">The exact deadline is in your card app’s offer details — usually 3 months from the day the account opened. Purchases you log with this card count automatically; until the bonus is done, the card picker puts this card first.</div>
+      ${b ? `<label class="check"><input type="checkbox" name="bEarned" ${b.earned ? 'checked' : ''}> Bonus earned</label>` : ''}
+    </div>`;
+}
+const watchBonus = (root, f) => f.bonusOn.addEventListener('change', () => { $('#bonus-f', root).hidden = !f.bonusOn.checked; });
+
+/** Read the bonus fields: the bonus, null to clear it, or an error message. */
+function readBonus(f, prev, months = 3) {
+  if (!f.bonusOn.checked) return null;
+  const spendCents = parseCents(f.bSpend.value);
+  if (!(spendCents > 0)) return 'Enter how much you need to spend for the bonus.';
+  const by = f.bBy.value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(by)) return 'Pick the bonus deadline.';
+  const points = Number(String(f.bPoints.value).replace(/[,\s]/g, '')) || 0;
+  const extraCents = f.bExtra.value.trim() ? parseCents(f.bExtra.value) : 0;
+  if (!(extraCents >= 0)) return 'Check the amount spent but not logged.';
+  return { spendCents, by, months: prev?.months || months, ...(points > 0 ? { points: Math.round(points) } : {}), ...(extraCents ? { extraCents } : {}), ...(f.bEarned?.checked ? { earned: true } : {}) };
+}
 
 /** Your cards ranked for a purchase, for the add-transaction sheet. */
 export function rankForPurchase(m, category, item) {
@@ -67,7 +101,7 @@ export function openWhichCard(m) {
         const amount = Math.abs(parseCents(f.amount.value));
         const cents = Number.isFinite(amount) && amount > 0 ? amount : 0;
         const ranked = bestCards(m.cards, cat, { today: m.today, txs: doc.transactions, catalog: m.catalog, prefs: m.cardPrefs, merchant });
-        if (cents) ranked.sort((a, b) => (a.blocked ? 1 : 0) - (b.blocked ? 1 : 0) || valueOn(b, cents) - valueOn(a, cents));
+        if (cents) ranked.sort(byBest(cents));
         best = ranked[0];
         const usable = ranked.filter(r => !r.blocked);
         // Plenty of places don't take Amex: name the best card on another network.
@@ -75,6 +109,8 @@ export function openWhichCard(m) {
         const what = `${merchant && merchant.cat === cat ? `${esc(merchant.name)} · ` : ''}${esc(rewardCatById(cat).label)}`;
         // credits waiting on your other cards for this purchase (e.g. Uber Cash on the Gold)
         const elsewhere = usable.filter(r => r !== best && r.perks.length && r.card.id !== best.card.id);
+        // while a welcome bonus decides the pick, say which card would win without it
+        const normal = best.bonus ? usable.filter(r => r !== best).sort((a, b) => b.pct - a.pct)[0] : null;
         out.innerHTML = `
           <div class="card">
             <div class="eyebrow">${what}${unsure ? ' · not sure' : !picked && guess && !merchant ? ' · best guess' : ''}</div>
@@ -85,6 +121,9 @@ export function openWhichCard(m) {
             </div>
             ${best.blocked ? `<p class="err mt8" style="margin-bottom:0">${esc(best.blocked)} — none of your cards fit here.</p>` : ''}
             <div class="small ink2 mt8">${esc(rateText(best.card, best.rate))}${best.note ? ` · ${esc(best.note)}` : ''}</div>
+            ${best.storeCreditCents && usable.some(r => r.bonus && r !== best) ? `<div class="small mt8" style="font-weight:600">Use ${esc(best.card.short)} here: its ${money(best.storeCreditCents, { mask: false })} credit is free money, worth more than putting this toward your welcome bonus.</div>` : ''}
+            ${best.bonus ? `<div class="small mt8" style="font-weight:600">★ Counts toward your welcome bonus — ${money(best.bonus.leftCents, { whole: true, mask: false })} to go by ${esc(fmtDate(best.bonus.by))}.</div>` : ''}
+            ${best.bonus && normal && normal.pct > best.pct ? `<div class="small muted">Once the bonus is done, ${esc(normal.card.short)} earns more here (${pct(normal.pct)} back).</div>` : ''}
             ${best.capLeftCents != null && cents > best.capLeftCents ? `<div class="small ink2">Only ${money(best.capLeftCents, { mask: false })} left at this rate; the rest earns less.</div>` : ''}
             ${best.activate ? `<div class="small mt8" style="font-weight:600">${ICON.alert.replace('<svg', '<svg width="14" height="14" style="display:inline-block;vertical-align:-2px;color:var(--warn-mark)"')} ${esc(best.activate)}</div>` : ''}
             ${best.perks.map(p => `<div class="small good mt8">+ ${esc(p)}</div>`).join('')}
@@ -125,7 +164,23 @@ export function cardsView(m) {
         <button class="btn primary block" data-action="card-add">${ICON.plus}Add a card</button></div>
       ${considerCard(m)}${footer(m)}`;
   }
-  return whichCard(m) + feesCard(m) + creditsCard(m) + yourCards(m) + considerCard(m) + footer(m);
+  return bonusCard(m) + whichCard(m) + feesCard(m) + creditsCard(m) + yourCards(m) + considerCard(m) + footer(m);
+}
+
+function bonusCard(m) {
+  const list = m.cards.map(c => ({ c, s: bonusStatus(c, { txs: doc.transactions, today: m.today }) }))
+    .filter(({ s }) => s && (s.active || (s.met && daysBetween(s.by, m.today) <= 30)));
+  if (!list.length) return '';
+  return `<div class="card">
+    <div class="card-h"><h2>Welcome bonus</h2></div>
+    ${list.map(({ c, s }) => `<button data-action="card-detail" data-id="${esc(c.id)}" style="display:block;width:100%;text-align:left;padding:4px 0">
+      <div class="between" style="margin-bottom:6px"><span class="row-flex" style="gap:8px"><span class="dot" style="background:${cardDot(m, c)}"></span><strong style="font-weight:620">${esc(c.short)}</strong></span>
+        ${s.met ? `<span class="pill good">${ICON.check}Bonus unlocked</span>` : s.onPace ? `<span class="pill good">${ICON.check}On pace</span>` : `<span class="pill bad">${ICON.alert}Behind</span>`}</div>
+      ${meter(s.spentCents / s.targetCents, { color: cardDot(m, c), pace: s.met ? null : s.elapsed })}
+      <div class="meter-legend"><span><strong class="ink2">${money(s.spentCents, { whole: true })}</strong> of ${money(s.targetCents, { whole: true })}</span><span>${s.met ? 'Done' : `${money(s.leftCents, { whole: true })} to go by ${esc(fmtDate(s.by))}`}</span></div>
+      ${s.met ? '' : `<div class="small ink2 mt8">About <strong>${money(s.perMonthCents, { whole: true })} a month</strong> for the next ${s.daysLeft} days. Put everything on it — work expenses too — until it’s done; the card picker already does.</div>`}
+    </button>`).join('')}
+  </div>`;
 }
 
 function whichCard(m) {
@@ -140,6 +195,7 @@ function whichCard(m) {
       <span class="row-main">
         <span class="row-title" style="display:block">${esc(r.card.short)}</span>
         <span class="row-sub" style="display:block;white-space:normal">${esc(rateText(r.card, r.rate))}${r.note ? ` · ${esc(r.note)}` : ''}</span>
+        ${r.bonus ? `<span class="row-sub" style="display:block;white-space:normal;font-weight:600;color:var(--ink)">★ ${esc(bonusLine(r.bonus))}</span>` : ''}
         ${r.capLeftCents != null ? `<span class="row-sub" style="display:block">${money(r.capLeftCents, { whole: true, mask: false })} left at this rate</span>` : ''}
         ${r.activate ? `<span class="small" style="display:flex;gap:6px;align-items:flex-start;margin-top:6px;font-weight:600;color:var(--ink)"><span style="color:var(--warn-mark);flex:none;margin-top:1px">${ICON.alert.replace('<svg', '<svg width="14" height="14"')}</span>${esc(r.activate)}</span>` : ''}
         ${r.perks.map(p => `<span class="row-sub good" style="display:block;white-space:normal">+ ${esc(p)}</span>`).join('')}
@@ -176,7 +232,7 @@ function feesCard(m) {
         ${meter(s.targetCents ? s.totalCents / s.targetCents : 0, { color: cardDot(m, c) })}
         <div class="meter-legend"><span><strong class="ink2">${money(s.totalCents, { whole: true })}</strong> of ${money(s.targetCents, { whole: true })}${freeYear ? ' (next year’s fee)' : ''}</span><span>${s.projectedCents != null ? `on pace for ${money(s.projectedCents, { whole: true })}` : ''}</span></div>
         <div class="small muted mt8">${freeYear ? `No fee until ${esc(fmtMonth(s.renews.slice(0, 7)))}, then ${money(s.nextFeeCents, { whole: true })}` : `${money(s.feeCents, { whole: true })} fee · renews ${esc(fmtDate(s.renews, { year: true }))}`}${s.guessed ? ' · add the month you opened it for exact dates' : ''}</div>
-        <div class="small muted">Rewards ${money(s.rewardsCents, { whole: true })}${s.rewardsEstimated ? ` (from ${s.purchases} logged purchase${s.purchases === 1 ? '' : 's'})` : ' (from your statement)'} + credits used ${money(s.creditsCents, { whole: true })}</div>
+        <div class="small muted">Rewards ${money(s.rewardsCents, { whole: true })}${s.rewardsEstimated ? ` (from ${s.purchases} logged purchase${s.purchases === 1 ? '' : 's'})` : ' (from your statement)'} + credits used ${money(s.creditsCents, { whole: true })}${s.bonusCents ? ` + welcome bonus ${money(s.bonusCents, { whole: true })}` : ''}</div>
       </button>`;
     }).join('')}
     <p class="note" style="margin:8px 0 0">Rewards are estimated from purchases you log with each card. If you don’t log everything, enter the rewards from your statement on the card.</p>
@@ -187,8 +243,8 @@ function openCredits(m) {
   const out = [];
   for (const c of m.cards) {
     for (const cr of c.credits || []) {
-      if (cr.per === 'every4' || c.owned.ignoreCredits?.includes(cr.id)) continue;
-      const left = cr.cents - creditUsedNow(c, cr, m.today);
+      if (cr.per === 'every4' || !creditLive(cr, m.today) || c.owned.ignoreCredits?.includes(cr.id)) continue;
+      const left = cr.cents - creditUsedNow(c, cr, m.today, doc.transactions);
       if (left > 0) out.push({ card: c, credit: cr, left, ends: periodEnd(cr.per, m.today, c.opened) });
     }
   }
@@ -268,18 +324,19 @@ function openCardDetail(m, id) {
           <div class="legend">
             <div class="legend-row"><span class="lbl">Rewards<small>${s.rewardsEstimated ? `estimated from ${s.purchases} logged purchase${s.purchases === 1 ? '' : 's'}` : 'from your statement'}</small></span><span class="val">${money(s.rewardsCents)}</span></div>
             <div class="legend-row"><span class="lbl">Credits used</span><span class="val">${money(s.creditsCents)}</span></div>
+            ${s.bonusCents ? `<div class="legend-row"><span class="lbl">Welcome bonus</span><span class="val">${money(s.bonusCents)}</span></div>` : ''}
             <div class="legend-row"><span class="lbl">${freeYear ? 'Next year’s fee' : 'Annual fee'}</span><span class="val">−${money(s.targetCents)}</span></div>
             <div class="legend-row"><span class="lbl"><strong>${s.totalCents >= s.targetCents ? 'Ahead by' : 'Still to go'}</strong>${s.projectedCents != null ? `<small>on pace for ${money(s.projectedCents, { whole: true })} by ${esc(fmtDate(s.renews))}</small>` : ''}</span><span class="val ${s.totalCents >= s.targetCents ? 'good' : ''}">${money(Math.abs(s.totalCents - s.targetCents))}</span></div>
           </div>
           ${s.purchases ? `<p class="note mt8" style="margin-bottom:0">Compared with putting the same purchases on your no-fee cards, this card is ${s.vsNoFeeCents >= 0 ? 'ahead' : 'behind'} by <strong class="ink2">${money(Math.abs(s.vsNoFeeCents))}</strong> this year (rewards + credits).</p>` : ''}
-          <label class="field mt12"><span>${isCash ? 'Cash back' : 'Points'} earned since ${esc(fmtDate(s.start))} (optional)</span><input name="override" inputmode="${isCash ? 'decimal' : 'numeric'}" placeholder="${isCash ? `${(s.rewardsCents / 100).toFixed(2)} estimated` : `${s.rewardsUnits.toLocaleString()} estimated`}" value="${Number.isFinite(override) ? (isCash ? (override / 100).toFixed(2) : override) : ''}"><div class="hint">From your ${esc(card.issuer || 'card')} account, if you don’t log every purchase here${isCash ? '' : ` · counted at ${pointCents(card, m.catalog, m.cardPrefs)}¢ a point`}.</div></label>`
+          <label class="field mt12"><span>${isCash ? 'Cash back' : 'Points'} earned since ${esc(fmtDate(s.start))} (optional)</span><input name="override" inputmode="${isCash ? 'decimal' : 'numeric'}" placeholder="${isCash ? `${(s.rewardsCents / 100).toFixed(2)} estimated` : `${s.rewardsUnits.toLocaleString()} estimated`}" value="${Number.isFinite(override) ? (isCash ? (override / 100).toFixed(2) : override) : ''}"><div class="hint">From your ${esc(card.issuer || 'card')} account, if you don’t log every purchase here — leave out any welcome bonus${isCash ? '' : ` · counted at ${pointCents(card, m.catalog, m.cardPrefs)}¢ a point`}.</div></label>`
           : `<p class="note" style="margin:6px 0 0">No annual fee.</p>`}
       </div>
       ${rot ? `<div class="card"><div style="font-weight:650">${esc(q.replace('-', ' '))} bonus: ${+rot.rate}% on ${esc(rot.label)}</div>
         <div class="small muted mt8">Up to ${money(rot.capCents, { whole: true, mask: false })} this quarter. ${esc(rot.activate || '')}</div>
         <label class="check mt12 mb0"><input type="checkbox" name="activated" ${o.activated?.includes(q) ? 'checked' : ''}> I’ve activated it</label></div>` : ''}
       ${(card.credits || []).length ? `<div class="group-h">Credits — how much you’ve used</div><div class="card">${card.credits.map(cr => {
-        const used = creditUsedNow(card, cr, m.today);
+        const used = creditUsedNow(card, cr, m.today, doc.transactions);
         return `<div style="padding:8px 0;border-top:1px solid var(--hairline)">
           <div class="between"><strong style="font-weight:600">${esc(cr.label)}</strong><span class="small ink2">${money(cr.cents, { mask: false })} ${esc(periodLabel(cr.per))}</span></div>
           ${cr.note ? `<div class="small muted">${esc(cr.note)}</div>` : ''}
@@ -296,9 +353,11 @@ function openCardDetail(m, id) {
       <label class="field"><span>Nickname</span><input name="nickname" maxlength="30" placeholder="${esc(card.catalogId ? (m.catalog.cards.find(c => c.id === card.catalogId)?.short || '') : card.short)}" value="${esc(o.nickname || '')}"></label>
       <label class="field"><span>Month you opened it</span><input name="opened" type="month" value="${esc(o.opened || '')}"><div class="hint">Annual fees renew on this month.</div></label>
       ${card.annualFeeCents ? `<label class="check"><input type="checkbox" name="fyf" ${card.firstYearFree ? 'checked' : ''}> No annual fee the first year</label>` : ''}
+      ${bonusFields(o.bonus, card.welcome)}
       <p class="err" id="cd-err"></p>
       <button type="button" class="btn danger block mt16" id="cd-del">${ICON.trash}Remove card</button>`,
     onMount: (root, sheet) => {
+      watchBonus(root, sheet.form.elements);
       root.addEventListener('click', e => {
         const b = e.target.closest('[data-full]');
         if (b) sheet.form.elements['cr_' + b.dataset.full].value = dollars(Number(b.dataset.cents));
@@ -319,7 +378,7 @@ function openCardDetail(m, id) {
         o.rewardsOverride = o.rewardsOverride || {};
         const raw = f.override.value.trim();
         if (raw) {
-          const v = isCash ? parseCents(raw) : Number(raw.replace(/[,s]/g, ''));
+          const v = isCash ? parseCents(raw) : Number(raw.replace(/[,\s]/g, ''));
           if (!(v >= 0)) return err(`Check the ${isCash ? 'cash back' : 'points'} amount.`);
           o.rewardsOverride[s.start] = isCash ? v : Math.round(v);
         }
@@ -329,6 +388,9 @@ function openCardDetail(m, id) {
         o.activated = (o.activated || []).filter(x => x !== q);
         if (f.activated.checked) o.activated.push(q);
       }
+      const bonus = readBonus(f, o.bonus, card.welcome?.months);
+      if (typeof bonus === 'string') return err(bonus);
+      if (bonus) o.bonus = bonus; else delete o.bonus;
       o.ignoreCredits = (card.credits || []).filter(cr => f['ig_' + cr.id]?.checked).map(cr => cr.id);
       o.creditsUsed = o.creditsUsed || {};
       for (const cr of card.credits || []) {
@@ -373,10 +435,19 @@ function openNewCard(m, catalogId) {
       <label class="field"><span>Month you opened it</span><input name="opened" type="month" value="${esc(m.today.slice(0, 7))}"><div class="hint">Annual fees and some credits renew on this month.</div></label>
       ${c.annualFeeCents ? `<label class="check"><input type="checkbox" name="fyf" ${c.firstYearFree ? 'checked' : ''}> No annual fee the first year</label>` : ''}
       ${c.rotating?.some(r => r.quarter === quarterOf(m.today)) ? `<label class="check"><input type="checkbox" name="activated"> I’ve activated this quarter’s 5% bonus</label>` : ''}
-      <label class="field"><span>Nickname (optional)</span><input name="nickname" maxlength="30" placeholder="${esc(c.short)}"></label>`,
+      <label class="field"><span>Nickname (optional)</span><input name="nickname" maxlength="30" placeholder="${esc(c.short)}"></label>
+      ${bonusFields(null, c.welcome && { spendCents: c.welcome.spendCents, by: addMonths(m.today, c.welcome.months || 3) })}
+      <p class="err" id="nc-err"></p>`,
+    onMount: (root, sheet) => {
+      watchBonus(root, sheet.form.elements);
+      if (c.welcome) { sheet.form.elements.bonusOn.checked = true; $('#bonus-f', root).hidden = false; }
+    },
     onSubmit: form => {
       const f = form.elements;
+      const bonus = readBonus(f, null, c.welcome?.months);
+      if (typeof bonus === 'string') { $('#nc-err', form).textContent = bonus; return false; }
       doc.cards.push({
+        ...(bonus ? { bonus } : {}),
         id: newId('card'), catalogId, opened: f.opened.value || undefined, nickname: f.nickname.value.trim() || undefined,
         ...(f.fyf ? { firstYearFree: f.fyf.checked } : {}), creditsUsed: {}, activated: f.activated?.checked ? [quarterOf(m.today)] : [],
       });
@@ -513,6 +584,12 @@ export function cardAlerts(m) {
     const rot = (c.rotating || []).find(r => r.quarter === q);
     if (rot && !c.owned.activated?.includes(q)) {
       out.push({ icon: ICON.alert, text: `<strong>Activate ${esc(c.short)}’s 5% bonus</strong> on ${esc(rot.label)}. ${esc(rot.activate || '')}`, action: `<button class="btn small" data-action="card-activated" data-card="${esc(c.id)}" data-q="${q}">${ICON.check}Done</button>` });
+    }
+  }
+  for (const c of m.cards) {
+    const s = bonusStatus(c, { txs: doc.transactions, today: m.today });
+    if (s?.active && (!s.onPace || s.daysLeft <= 21)) {
+      out.push({ icon: ICON.flag, text: `<strong>${esc(c.short)} welcome bonus:</strong> ${money(s.leftCents, { whole: true, mask: false })} to go by ${esc(fmtDate(s.by))} — about ${money(s.perMonthCents, { whole: true, mask: false })} a month. Put everything on it, work expenses too.`, action: '<button class="btn small" data-action="open-cards">See progress</button>' });
     }
   }
   const expiring = openCredits(m).filter(x => x.ends && (x.credit.per === 'month' ? day >= 20 : daysBetween(m.today, x.ends) <= 30));

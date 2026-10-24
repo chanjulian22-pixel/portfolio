@@ -71,6 +71,7 @@ export const MERCHANTS = [
     ['Peacock', /\bpeacock\b/], ['Paramount+', /\bparamount\b/], ['Apple TV / Music', /\bapple (tv|music)\b/], ['SiriusXM', /\bsirius/]]),
   ...list('drugstore', [['CVS', /\bcvs\b/], ['Walgreens', /\bwalgreens\b/], ['Rite Aid', /\brite aid\b/], ['Duane Reade', /\bduane reade\b/]]),
   { id: 'stubhub', name: 'StubHub', re: /\bstub ?hub\b|\bviagogo\b/, cat: 'other' },
+  { id: 'peloton', name: 'Peloton', re: /\bpeloton\b/, cat: 'other' },
 ];
 for (const x of MERCHANTS) x.id ||= x.name.toLowerCase().replace(/[^a-z0-9]+/g, '');
 
@@ -175,7 +176,7 @@ export function pointCents(card, catalog, prefs = {}) {
 const ruleFits = (r, cat, merchant) => r.cat === cat && (!r.merchants || (merchant ? r.merchants.includes(merchant) : cat === 'portal'));
 
 function rules(card, cat, date, merchant) {
-  const fallback = card.earn.find(r => r.cat === 'other') || { cat: 'other', rate: 1 };
+  const fallback = card.earn.find(r => r.cat === 'other' && !r.merchants) || { cat: 'other', rate: 1 };
   const base = card.earn.find(r => ruleFits(r, cat, merchant)) || fallback;
   const rot = (card.rotating || []).find(r => r.quarter === quarterOf(date) && r.cats.includes(cat)) || null;
   return { base, rot, fallback };
@@ -238,6 +239,7 @@ function capUsage(card, txs, today) {
 export function bestCards(cards, cat, { today, txs = [], catalog, prefs = {}, merchant = null }) {
   const out = cards.map(card => {
     const mine = txs.filter(t => t.cardId === card.id);
+    const bonus = bonusStatus(card, { txs, today });
     const used = capUsage(card, mine, today);
     const { base, rot, fallback } = rules(card, cat, today, merchant?.id);
     let rate = base.rate, note = base.note || '', capLeft = null, activate = null, after = null;
@@ -257,16 +259,34 @@ export function bestCards(cards, cat, { today, txs = [], catalog, prefs = {}, me
       }
     }
     const pc = pointCents(card, catalog, prefs);
+    // a credit only this store can use, with money left: free money, so it goes first
+    const storeCredit = merchant ? (card.credits || []).filter(c => c.merchants?.includes(merchant.id) && creditLive(c, today))
+      .reduce((s, c) => s + Math.max(0, c.cents - creditUsedNow(card, c, today, txs)), 0) : 0;
     const blocked = merchant?.only && card.network && !merchant.only.includes(card.network) ? `${merchant.name} doesn’t take ${NETWORKS[card.network] || card.network}` : null;
-    return { card, rate, pct: rate * pc / 100, afterPct: after != null ? after * pc / 100 : null, note, capLeftCents: capLeft, activate, blocked, perks: creditHints(card, cat, today, merchant?.id) };
+    return {
+      card, rate, pct: rate * pc / 100, afterPct: after != null ? after * pc / 100 : null, note, capLeftCents: capLeft, activate, blocked,
+      perks: creditHints(card, cat, today, merchant?.id, txs), bonus: bonus?.active ? bonus : null, storeCreditCents: storeCredit,
+    };
   });
-  return out.sort((a, b) => (a.blocked ? 1 : 0) - (b.blocked ? 1 : 0) || b.pct - a.pct || (a.card.annualFeeCents - b.card.annualFeeCents));
+  return out.sort(byBest());
 }
 
-/** What a purchase of `cents` earns with one ranked card, in cents of value (caps included). */
+/**
+ * Order for ranked cards: ones the store takes; a store-only credit with money left (free money);
+ * a welcome bonus still to earn (worth far more per dollar than any rate until it's met); then what
+ * the purchase earns — per dollar, or on `cents` when the amount is known.
+ */
+export const byBest = (cents = 0) => (a, b) => (a.blocked ? 1 : 0) - (b.blocked ? 1 : 0)
+  || (b.storeCreditCents || 0) - (a.storeCreditCents || 0)
+  || (b.bonus ? 1 : 0) - (a.bonus ? 1 : 0)
+  || (cents ? valueOn(b, cents) - valueOn(a, cents) : b.pct - a.pct)
+  || a.card.annualFeeCents - b.card.annualFeeCents;
+
+/** What a purchase of `cents` earns with one ranked card, in cents of value (store credit and caps included). */
 export function valueOn(r, cents) {
-  if (r.capLeftCents != null && cents > r.capLeftCents) return Math.round(r.capLeftCents * r.pct + (cents - r.capLeftCents) * (r.afterPct ?? r.pct));
-  return Math.round(cents * r.pct);
+  const credit = Math.min(r.storeCreditCents || 0, cents);
+  if (r.capLeftCents != null && cents > r.capLeftCents) return credit + Math.round(r.capLeftCents * r.pct + (cents - r.capLeftCents) * (r.afterPct ?? r.pct));
+  return credit + Math.round(cents * r.pct);
 }
 
 // ---------------------------------------------------------------- credits
@@ -315,27 +335,50 @@ export function periodEnd(per, date, opened) {
   }
 }
 
-/** Amount of a credit used in its current period. */
-export function creditUsedNow(card, credit, today) {
-  return card.owned?.creditsUsed?.[credit.id]?.[periodKey(credit.per, today, card.opened)] || 0;
+/** Some credits only run until a date (e.g. Lyft through 9/30/2027). */
+export const creditLive = (credit, today) => !credit.until || today <= credit.until;
+
+// Purchases you log on a card use up its store-only credits (Lyft, Dunkin', Uber Cash…) and any
+// credit marked `auto` (e.g. "any travel") by themselves. Others (Resy, Exclusive Tables) depend on
+// where you ate, so you mark those.
+const autoTracked = credit => !!(credit.merchants || credit.auto);
+const creditFits = (credit, t) => credit.merchants ? credit.merchants.includes(merchantFor(t.item)?.id) : !!credit.cats?.includes(rewardCatFor(t));
+
+/** Per period, what logged purchases on this card used of a credit. */
+function autoUse(card, credit, txs) {
+  const out = {};
+  if (!autoTracked(credit)) return out;
+  for (const t of txs) {
+    if (t.cardId !== card.id || !(t.cents > 0) || !creditLive(credit, t.date) || !creditFits(credit, t)) continue;
+    const key = periodKey(credit.per, t.date, card.opened);
+    out[key] = Math.min(credit.cents, (out[key] || 0) + t.cents);
+  }
+  return out;
+}
+
+/** Amount of a credit used in its current period: what you marked, or what purchases on the card used — whichever is more. */
+export function creditUsedNow(card, credit, today, txs = []) {
+  const key = periodKey(credit.per, today, card.opened);
+  return Math.max(card.owned?.creditsUsed?.[credit.id]?.[key] || 0, autoUse(card, credit, txs)[key] || 0);
 }
 
 /** Credits that apply to a purchase (by store when the credit is store-only) with money left this period. */
-function creditHints(card, cat, today, merchant) {
-  return (card.credits || []).filter(c => c.merchants ? c.merchants.includes(merchant) : c.cats?.includes(cat)).map(c => {
-    const left = c.cents - creditUsedNow(card, c, today);
+function creditHints(card, cat, today, merchant, txs = []) {
+  return (card.credits || []).filter(c => creditLive(c, today) && (c.merchants ? c.merchants.includes(merchant) : c.cats?.includes(cat))).map(c => {
+    const left = c.cents - creditUsedNow(card, c, today, txs);
     return left > 0 ? `$${(left / 100).toFixed(left % 100 ? 2 : 0)} ${c.label} left ${periodLabel(c.per)}${c.if ? ` ${c.if}` : ''}` : null;
   }).filter(Boolean);
 }
 
-/** Total credits used in periods that start inside [from, to]. */
-export function creditsInRange(card, from, to) {
+/** Total credits used (marked, or used by logged purchases) in periods that start inside [from, to]. */
+export function creditsInRange(card, from, to, txs = []) {
   let total = 0;
-  for (const [id, byPeriod] of Object.entries(card.owned?.creditsUsed || {})) {
-    if (!(card.credits || []).some(c => c.id === id)) continue;
-    for (const [key, cents] of Object.entries(byPeriod)) {
+  for (const credit of card.credits || []) {
+    const marked = card.owned?.creditsUsed?.[credit.id] || {};
+    const auto = autoUse(card, credit, txs);
+    for (const key of new Set([...Object.keys(marked), ...Object.keys(auto)])) {
       const start = periodStart(key);
-      if (start && start >= from && start <= to) total += cents;
+      if (start && start >= from && start <= to) total += Math.max(marked[key] || 0, auto[key] || 0);
     }
   }
   return total;
@@ -375,8 +418,11 @@ export function feeStatus(card, { txs = [], today, catalog, prefs = {}, others =
   const est = earnings(card, mine, { from: yr.start, to: today, valueCents: pc });
   const override = card.owned?.rewardsOverride?.[yr.start];
   const rewards = Number.isFinite(override) ? Math.round(override * pc) : est.cents;
-  const credits = creditsInRange(card, yr.start, yr.end);
-  const total = rewards + credits;
+  const credits = creditsInRange(card, yr.start, yr.end, txs);
+  // a welcome bonus you've earned counts in the card year its deadline falls in
+  const bs = bonusStatus(card, { txs, today });
+  const bonus = bs?.met && bs.points && bs.by >= yr.start && bs.by <= yr.end ? Math.round(bs.points * pc) : 0;
+  const total = rewards + credits + bonus;
   const days = daysBetween(yr.start, yr.end) + 1;
   const elapsed = Math.min(1, (daysBetween(yr.start, today) + 1) / days);
   const projected = elapsed >= 0.08 ? Math.round(total / elapsed) : null;
@@ -388,7 +434,33 @@ export function feeStatus(card, { txs = [], today, catalog, prefs = {}, others =
   for (const o of others.filter(o => o.id !== card.id && !o.annualFeeCents)) {
     alt = Math.max(alt, earnings(o, inYear, { valueCents: pointCents(o, catalog, prefs) }).cents);
   }
-  return { ...yr, rewardsCents: rewards, rewardsEstimated: !Number.isFinite(override), rewardsUnits: Number.isFinite(override) ? override : Math.round(est.units), creditsCents: credits, totalCents: total, projectedCents: projected, targetCents: target, status, elapsed, vsNoFeeCents: est.cents - alt + credits, purchases: inYear.length };
+  return { ...yr, rewardsCents: rewards, rewardsEstimated: !Number.isFinite(override), rewardsUnits: Number.isFinite(override) ? override : Math.round(est.units), creditsCents: credits, bonusCents: bonus, totalCents: total, projectedCents: projected, targetCents: target, status, elapsed, vsNoFeeCents: est.cents - alt + credits + bonus, purchases: inYear.length };
+}
+
+// ---------------------------------------------------------------- welcome bonus
+/**
+ * Progress toward a welcome bonus ("spend $6,000 in 3 months"): purchases logged on the card in the
+ * window (refunds count against it) plus spending you said isn't logged here. Null without a bonus.
+ * owned.bonus = { spendCents, by, months?, from?, points?, extraCents?, earned? }
+ */
+export function bonusStatus(card, { txs = [], today }) {
+  const b = card.owned?.bonus;
+  if (!b || !(b.spendCents > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(b.by || '')) return null;
+  const from = b.from || addMonths(b.by, -(b.months || 3));
+  const logged = txs.filter(t => t.cardId === card.id && t.date >= from && t.date <= b.by).reduce((s, t) => s + t.cents, 0);
+  const spent = Math.max(0, logged + (b.extraCents || 0));
+  const left = Math.max(0, b.spendCents - spent);
+  const met = !!b.earned || left === 0;
+  const daysLeft = daysBetween(today, b.by);
+  const expired = !met && daysLeft < 0;
+  const elapsed = Math.min(1, Math.max(0, daysBetween(from, today)) / Math.max(1, daysBetween(from, b.by)));
+  return {
+    from, by: b.by, targetCents: b.spendCents, spentCents: spent, leftCents: left, met, expired,
+    active: !met && !expired && today >= from, daysLeft, elapsed, points: b.points || 0,
+    // what's still needed per month, rounded up to the dollar; on pace if spending so far keeps up
+    perMonthCents: !met && daysLeft > 0 ? Math.ceil(left / (daysLeft / 30.4) / 100) * 100 : 0,
+    onPace: met || spent >= b.spendCents * elapsed,
+  };
 }
 
 /**

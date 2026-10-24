@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-23",
+  "updated": "2026-10-24",
   "note": "Card terms as published by the issuers and major review sites. Rates change; each card lists when it was last checked and where. Point values are what one point is worth to you, in cents.",
   "programs": {
     "MR": { "label": "Amex Membership Rewards", "cents": 1, "note": "About 1¢ each toward travel on Amex; 0.6¢ as a statement credit; often 1.5–2¢ through airline and hotel transfer partners." },
@@ -127,27 +127,30 @@
       "annualFeeCents": 79500,
       "firstYearFree": false,
       "earn": [
-        { "cat": "portal", "rate": 8, "merchants": ["chasetravel"], "note": "Chase Travel, incl. The Edit hotels" },
+        { "cat": "portal", "rate": 8, "merchants": ["chasetravel"], "note": "Chase Travel: flights, hotels (incl. The Edit), car rentals, cruises, activities and tours" },
         { "cat": "flights", "rate": 4, "note": "Booked directly with the airline" },
         { "cat": "hotels", "rate": 4, "note": "Booked directly with the hotel" },
-        { "cat": "dining", "rate": 3, "note": "Dining worldwide, incl. takeout and delivery" },
-        { "cat": "rideshare", "rate": 5, "note": "Lyft rides only, through 9/30/2027 (Uber earns 1x)", "merchants": ["lyft"] },
+        { "cat": "dining", "rate": 3, "note": "Dining, incl. eligible delivery" },
+        { "cat": "rideshare", "rate": 5, "merchants": ["lyft"], "note": "Lyft rides, through 9/30/2027 (Uber earns 1x)" },
+        { "cat": "other", "rate": 10, "merchants": ["peloton"], "note": "Peloton equipment and accessories, through 12/31/2027" },
         { "cat": "other", "rate": 1 }
       ],
       "credits": [
-        { "id": "travel", "label": "Travel credit", "cents": 30000, "per": "cardyear", "cats": ["flights", "hotels", "portal", "transit", "rideshare"], "note": "Any travel purchase, each account year · those purchases earn no points" },
-        { "id": "edit", "label": "The Edit hotel credit", "cents": 50000, "per": "year", "cats": ["portal"], "note": "$250 per prepaid stay of 2+ nights through Chase Travel, up to $500 a year" },
-        { "id": "dining", "label": "Exclusive Tables dining", "cents": 15000, "per": "half", "cats": ["dining"], "note": "OpenTable Sapphire Reserve Exclusive Tables restaurants · $150 Jan–Jun, $150 Jul–Dec", "if": "at an Exclusive Tables restaurant" },
-        { "id": "stubhub", "label": "StubHub / viagogo", "cents": 15000, "per": "half", "note": "Concert and event tickets · $150 each half-year through 2027 · activation required", "merchants": ["stubhub"] },
-        { "id": "lyft", "label": "Lyft credit", "cents": 1000, "per": "month", "note": "$10 a month through 9/30/2027", "merchants": ["lyft"] },
-        { "id": "doordash", "label": "DoorDash promos", "cents": 1500, "per": "month", "note": "Free DashPass + $15 off a restaurant order each month (plus two $10 non-restaurant promos)", "merchants": ["doordash"] },
-        { "id": "peloton", "label": "Peloton membership", "cents": 1000, "per": "month", "note": "$10 a month through 2027 · activation required" },
-        { "id": "apple", "label": "Apple TV+ & Apple Music", "cents": 32400, "per": "year", "note": "Complimentary subscriptions · only worth it if you'd pay for them" },
-        { "id": "global-entry", "label": "Global Entry / TSA PreCheck", "cents": 12000, "per": "every4", "note": "One credit every 4 years" }
+        { "id": "travel", "label": "Travel credit", "cents": 30000, "per": "cardyear", "cats": ["flights", "hotels", "portal", "transit", "rideshare"], "auto": true, "note": "Any travel charged to the card, each account year (resets with the November statement) · those purchases earn no points" },
+        { "id": "dining", "label": "Exclusive Tables dining", "cents": 15000, "per": "half", "cats": ["dining"], "if": "at an Exclusive Tables restaurant", "note": "Sapphire Reserve Exclusive Tables restaurants on OpenTable · $150 Jan–Jun and $150 Jul–Dec" },
+        { "id": "stubhub", "label": "StubHub / viagogo", "cents": 15000, "per": "half", "merchants": ["stubhub"], "note": "Concert and event tickets · $150 Jan–Jun and $150 Jul–Dec" },
+        { "id": "edit", "label": "The Edit hotel credit", "cents": 50000, "per": "year", "cats": ["portal"], "note": "Up to $250 per prepaid The Edit booking through Chase Travel, $500 a year" },
+        { "id": "chasehotels", "label": "Select Chase Travel hotels", "cents": 25000, "per": "year", "cats": ["portal"], "until": "2026-12-31", "note": "Stays at select hotels booked through Chase Travel · 2026 only" },
+        { "id": "lyft", "label": "Lyft credit", "cents": 1000, "per": "month", "merchants": ["lyft"], "until": "2027-09-30", "note": "$10 a month in the Lyft app, through 9/30/2027" },
+        { "id": "doordash", "label": "DoorDash promos", "cents": 3500, "per": "month", "merchants": ["doordash"], "note": "Up to $35 a month in DoorDash promos while enrolled in DashPass · activate DashPass first" },
+        { "id": "peloton", "label": "Peloton membership", "cents": 1000, "per": "month", "merchants": ["peloton"], "until": "2027-12-31", "note": "$10 a month toward a Peloton membership, through 12/31/2027" },
+        { "id": "apple", "label": "Apple TV & Apple Music", "cents": 30000, "per": "year", "note": "Free subscriptions ($156 + $144 a year) for at least a year · activate by 6/22/2027 · only worth it if you’d use them" },
+        { "id": "global-entry", "label": "Global Entry / TSA PreCheck", "cents": 12000, "per": "every4", "note": "One application fee every 4 years" }
       ],
-      "perks": ["Priority Pass and Chase Sapphire Lounge access", "IHG One Rewards Platinum Elite through 2027", "Points worth up to 2¢ with Points Boost on select Chase Travel bookings"],
-      "verified": "2026-10-23",
-      "source": "https://creditcards.chase.com/rewards-credit-cards/sapphire/reserve"
+      "perks": ["Pay with Paze at checkout: +10x points at participating merchants, through 12/31/2026", "Free DashPass (activate in the Chase app)", "IHG One Rewards Platinum Elite status through 12/31/2027 (activate)", "Priority Pass and Sapphire Lounge access (already on)"],
+      "verified": "2026-10-24",
+      "source": "https://creditcards.chase.com/rewards-credit-cards/sapphire/reserve",
+      "welcome": { "spendCents": 600000, "months": 3 }
     }
   ]
 }

@@ -150,13 +150,17 @@ export function openTxSheet(m, tx = null, defaults = {}) {
       <div class="field"><span>Category</span><div class="cat-grid" id="tx-cats">${catGrid()}</div></div>
       <div class="grid2">
         <label class="field"><span>Date</span><input name="date" type="date" value="${esc(t.date)}" ${t.undated ? 'disabled' : ''}></label>
-        <label class="field"><span>Paid from</span><select name="fundedBy"><option value="">Spending money</option>${funders.map(b => `<option value="${esc(b.id)}" ${t.fundedBy === b.id ? 'selected' : ''}>${esc(b.label)}</option>`).join('')}</select></label>
+        <label class="field"><span>Paid from</span><select name="fundedBy" ${t.work || t.loanId ? 'disabled' : ''}><option value="">Spending money</option>${funders.map(b => `<option value="${esc(b.id)}" ${t.fundedBy === b.id ? 'selected' : ''}>${esc(b.label)}</option>`).join('')}</select></label>
       </div>
       ${m.cards.length ? `<label class="field"><span>Card</span><select name="card"><option value="">Cash, debit or other</option>${m.cards.map(c => `<option value="${esc(c.id)}" ${t.cardId === c.id ? 'selected' : ''}>${esc(c.short)}</option>`).join('')}</select><div class="hint" id="tx-card-hint"></div></label>` : ''}
       <label class="check"><input type="checkbox" name="undated" ${t.undated ? 'checked' : ''}> No exact date (counts toward the month)</label>
-      <label class="check"><input type="checkbox" name="work" ${t.work ? 'checked' : ''}> 💼 Work expense — I’ll be reimbursed</label>
+      <label class="field"><span>Who was it for?</span><select name="for">
+        <option value="">Me</option>
+        <option value="work" ${t.work ? 'selected' : ''}>💼 Work — I’ll be reimbursed</option>
+        ${doc.loans.map(l => `<option value="loan:${esc(l.id)}" ${t.loanId === l.id ? 'selected' : ''}>${esc(l.name)} — ${l.direction === 'i-owe' ? 'take it off what I owe' : 'add it to what they owe me'}</option>`).join('')}
+      </select></label>
       <label class="check" id="tx-reimb" ${t.work && !isNew ? '' : 'hidden'}><input type="checkbox" name="reimbursed" ${t.reimbursedOn ? 'checked' : ''}> Already reimbursed</label>
-      <p class="note">Paying from a fund like Travel takes it out of that fund’s balance instead of your spending budget. Work expenses don’t count as spending; they’re tracked until you’re paid back.</p>
+      <p class="note">Paying from a fund like Travel takes it out of that fund’s balance instead of your spending budget. Work expenses and things you buy for someone else don’t count as your spending — work is tracked until you’re paid back, and a purchase for someone you owe comes off the loan. The card still earns its rewards either way.</p>
       <p class="err" id="tx-err"></p>
       ${isNew ? '' : `<button type="button" class="btn danger block mt16" id="tx-del">${ICON.trash}Delete transaction</button>`}`,
     onMount: (root, sheet) => {
@@ -182,7 +186,9 @@ export function openTxSheet(m, tx = null, defaults = {}) {
         const mine = ranked.find(r => r.card.id === f.card.value);
         const what = esc(rewardCatById(cat).label.toLowerCase());
         if (mine === best) {
-          hint.innerHTML = `${ICON.check.replace('<svg', '<svg width="13" height="13" style="display:inline-block;vertical-align:-2px"')} Best card for ${what}: ${pct(best.pct)} back${best.perks.length ? ` · ${esc(best.perks[0])}` : ''}${best.activate ? `<br><span class="bad">${esc(best.activate)}</span>` : ''}`;
+          hint.innerHTML = `${ICON.check.replace('<svg', '<svg width="13" height="13" style="display:inline-block;vertical-align:-2px"')} ${best.bonus ? `Counts toward your welcome bonus: ${money(best.bonus.leftCents, { whole: true, mask: false })} to go` : `Best card for ${what}: ${pct(best.pct)} back`}${best.perks.length ? ` · ${esc(best.perks[0])}` : ''}${best.activate ? `<br><span class="bad">${esc(best.activate)}</span>` : ''}`;
+        } else if (best.bonus) {
+          hint.innerHTML = `${esc(best.card.short)} has a welcome bonus to finish: ${money(best.bonus.leftCents, { whole: true, mask: false })} to go by ${esc(fmtDate(best.bonus.by))}.`;
         } else {
           hint.innerHTML = `${esc(best.card.short)} earns more on ${what}: ${pct(best.pct)} back${mine ? ` vs ${pct(mine.pct)}` : ''}.`;
         }
@@ -208,7 +214,10 @@ export function openTxSheet(m, tx = null, defaults = {}) {
       if (isNew && t.item && !picked) recat();
       cardHint();
       f.undated.addEventListener('change', () => { f.date.disabled = f.undated.checked; });
-      f.work.addEventListener('change', () => { if (!isNew) $('#tx-reimb', root).hidden = !f.work.checked; });
+      f.for.addEventListener('change', () => {
+        $('#tx-reimb', root).hidden = isNew || f.for.value !== 'work';
+        f.fundedBy.disabled = !!f.for.value; // work and loan purchases don't come out of a fund
+      });
       $('#tx-del', root)?.addEventListener('click', () => {
         if (!confirm(`Delete “${t.item}”?`)) return;
         doc.transactions = doc.transactions.filter(x => x.id !== t.id);
@@ -227,13 +236,14 @@ export function openTxSheet(m, tx = null, defaults = {}) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return err('Pick a date.');
       const item = f.what.value.trim() || 'Untitled';
       const cents = c * sign;
-      const work = f.work.checked;
+      const work = f.for.value === 'work';
+      const loanId = f.for.value.startsWith('loan:') ? f.for.value.slice(5) : undefined;
       if (work && sign < 0) return err('No need to log the reimbursement itself — mark the work expense as reimbursed instead.');
       const rec = {
         ...t, id: t.id || newId('t'), date, cents, item,
         category: category || suggestCategory(item, cents, doc.transactions),
-        fundedBy: work ? undefined : f.fundedBy.value || undefined, undated: undated || undefined,
-        work: work || undefined,
+        fundedBy: work || loanId ? undefined : f.fundedBy.value || undefined, undated: undated || undefined,
+        work: work || undefined, loanId,
         cardId: f.card ? f.card.value || undefined : t.cardId,
         reimbursedOn: work ? (f.reimbursed.checked ? t.reimbursedOn || todayISO() : undefined) : undefined,
         createdAt: t.createdAt || Date.now(),

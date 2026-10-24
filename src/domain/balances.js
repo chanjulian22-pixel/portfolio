@@ -117,13 +117,18 @@ export function ytdAll({ config, contributions, asOf }) {
 }
 
 /** What you owe (positive) on each loan: sum of its entries. */
-export const loanBalance = loan => loan.entries.reduce((a, e) => a + e.cents, 0);
+/**
+ * What's owed on a loan: its entries, plus purchases logged in Spending for that person — each one
+ * takes money off what you owe them, or adds to what they owe you.
+ */
+export const loanBalance = (loan, transactions = []) => loan.entries.reduce((a, e) => a + e.cents, 0)
+  + transactions.filter(t => t.loanId === loan.id).reduce((a, t) => a + (loan.direction === 'owed-to-me' ? t.cents : -t.cents), 0);
 
 /**
  * Net worth and its slices.
  * Loans count only when the loan says so (your spreadsheet's net worth left family loans out).
  */
-export function netWorth(balances, buckets, loans = []) {
+export function netWorth(balances, buckets, loans = [], transactions = []) {
   let assets = 0, invested = 0, cash = 0, retirement = 0;
   for (const b of buckets) {
     const bal = balances[b.id];
@@ -134,7 +139,7 @@ export function netWorth(balances, buckets, loans = []) {
     if (b.lockedUntilAge) retirement += bal.cents;
   }
   let liabilities = 0;
-  for (const l of loans) if (l.includeInNetWorth) liabilities += (l.direction === 'owed-to-me' ? -1 : 1) * loanBalance(l);
+  for (const l of loans) if (l.includeInNetWorth) liabilities += (l.direction === 'owed-to-me' ? -1 : 1) * loanBalance(l, transactions);
   return { total: assets - liabilities, assets, invested, cash, retirement, accessible: assets - retirement, liabilities };
 }
 
