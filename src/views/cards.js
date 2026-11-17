@@ -61,6 +61,34 @@ export function rankForPurchase(m, category, item) {
 /** The "About to pay?" bar that opens the which-card check (Home and the Cards screen). */
 export const payBar = () => `<button class="pay-bar" data-action="which-card">${ICON.spending}<span>About to pay? Find the best card</span></button>`;
 
+/**
+ * The answer without typing: your best card for each kind of purchase, grouped by card.
+ * Sits at the top of Home; tap it to look up a specific store.
+ */
+const SHORT_CAT = { dining: 'Dining', groceries: 'Groceries', gas: 'Gas', rideshare: 'Uber & Lyft', transit: 'Transit', flights: 'Flights', hotels: 'Hotels', streaming: 'Streaming', drugstore: 'Drugstores', other: 'Everything else' };
+export function cheatSheet(m) {
+  if (!m.catalog || !m.cards.length) return '';
+  const groups = new Map();
+  for (const cat of Object.keys(SHORT_CAT)) {
+    const best = bestCards(m.cards, cat, { today: m.today, txs: doc.transactions, catalog: m.catalog, prefs: m.cardPrefs }).find(r => !r.blocked);
+    if (!best) continue;
+    if (!groups.has(best.card.id)) groups.set(best.card.id, { r: best, cats: [] });
+    groups.get(best.card.id).cats.push(cat);
+  }
+  const list = [...groups.values()].sort((a, b) => b.cats.length - a.cats.length);
+  if (!list.length) return '';
+  const all = list.length === 1;
+  return `<button class="card" data-action="which-card" style="display:block;width:100%;text-align:left">
+    <div class="card-h" style="margin-bottom:6px"><h2>Which card?</h2><span class="link">Look up a store${ICON.chevR}</span></div>
+    ${list.map(g => `<div class="row-flex" style="align-items:flex-start;gap:10px;padding:7px 0">
+      <span class="dot" style="background:${cardDot(m, g.r.card)};width:11px;height:11px;margin-top:6px;flex:none"></span>
+      <div style="min-width:0"><div style="font-weight:680;font-size:17px;line-height:1.25">${esc(g.r.card.short)}</div>
+        <div class="small ink2" style="white-space:normal">${all ? 'Use it for everything right now' : g.cats.length > 5 ? `Everything except ${esc(list.filter(x => x !== g).flatMap(x => x.cats).map(c => SHORT_CAT[c].toLowerCase()).join(', '))}` : esc(g.cats.map(c => SHORT_CAT[c]).join(' · '))}</div>
+        ${g.r.bonus ? `<div class="small" style="font-weight:600;white-space:normal">★ Welcome bonus: ${money(g.r.bonus.leftCents, { whole: true })} to go by ${esc(fmtDate(g.r.bonus.by))}</div>` : ''}</div>
+    </div>`).join('')}
+  </button>`;
+}
+
 // ---------------------------------------------------------------- before you pay
 // Reward category → spending category, to start the transaction you log afterwards.
 const SPEND_CAT = { dining: 'food', groceries: 'groceries', gas: 'transport', rideshare: 'transport', transit: 'transport', flights: 'travel', hotels: 'travel', portal: 'travel', streaming: 'bills', drugstore: 'health' };
