@@ -5,6 +5,7 @@
 import { allocatePaycheck, payFor, phaseOn, bucketCap, isAsset, AllocationError } from './allocation.js';
 import { paydaysInMonth, parts, iso, daysInMonth, yearOf } from './dates.js';
 import { taxYear } from './taxdata.js';
+import { settleResidual } from './paychecks.js';
 
 const monthlyRate = r => (r > 0 ? Math.pow(1 + r, 1 / 12) - 1 : 0);
 
@@ -12,15 +13,19 @@ const monthlyRate = r => (r > 0 ? Math.pow(1 + r, 1 / 12) - 1 : 0);
  * @param {object} p
  * @param {object} p.config
  * @param {string} p.startDate balances are as of this date; paydays strictly after it are simulated
+ * @param {boolean} [p.includeStart] also simulate a payday that falls on startDate (today's paycheck:
+ *   its money isn't in the balances yet, except what `sentAhead` says was already sent)
  * @param {string} p.endDate
  * @param {Record<string, number>} p.balances cents per asset bucket
  * @param {Record<string, number>} [p.ytd] contributions so far this year for limited / pre-tax buckets
  * @param {Record<string, Record<string, number>>} [p.sentAhead] transfers already made for upcoming
- *   paydays ({ payday: { bucketId: cents } }). That money is already in `balances`, so it isn't added again.
+ *   paydays ({ payday: { bucketId: cents } }). That money is already in `balances`, so it isn't added
+ *   again — and that payday is allocated as if it hadn't been sent yet, so a bucket's own early
+ *   transfer doesn't count against its target or annual limit.
  * @param {Record<string, number>} [p.catchUp] amounts an earlier paycheck still owes a bucket (raised
  *   after it was sent); the next paycheck sends them before the residual gets anything.
  */
-export function project({ config, startDate, endDate, balances, ytd = {}, sentAhead = {}, catchUp = {} }) {
+export function project({ config, startDate, endDate, balances, ytd = {}, sentAhead = {}, catchUp = {}, includeStart = false }) {
   const buckets = config.buckets;
   const assets = buckets.filter(isAsset);
   const periods = config.profile?.payPeriodsPerYear || 24;
@@ -88,7 +93,7 @@ export function project({ config, startDate, endDate, balances, ytd = {}, sentAh
   const end = parts(endDate);
   while (y < end.y || (y === end.y && m <= end.m)) {
     for (const p of paydaysInMonth(y, m)) {
-      if (p.date <= startDate || p.date > endDate) continue;
+      if (p.date > endDate || (includeStart ? p.date < startDate : p.date <= startDate)) continue;
       applyEventsUpTo(p.date);
       const py = yearOf(p.date);
       if (py !== year) {
@@ -98,11 +103,13 @@ export function project({ config, startDate, endDate, balances, ytd = {}, sentAh
       const pay = payFor(p.date, config.incomes, periods);
       if (!pay) continue;
       const { phase, extended } = phaseOn(p.date, config.phases || []);
+      const ahead = sentAhead[p.date];
+      const less = obj => Object.fromEntries(Object.entries(obj).map(([id, v]) => [id, Math.max(0, v - (ahead[id] || 0))]));
       let result;
       try {
         result = allocatePaycheck({
-          takeHomeCents: pay.takeHomeCents, index: p.index, date: p.date, buckets, phase,
-          sweeps: config.sweeps, balances: bal, ytd: ytdNow, targetOverrides, extra: owed,
+          takeHomeCents: pay.takeHomeCents, index: p.index, date: p.date, buckets, phase, sweeps: config.sweeps,
+          balances: ahead ? less(bal) : bal, ytd: ahead ? less(ytdNow) : ytdNow, targetOverrides, extra: owed,
         });
         owed = {};
       } catch (err) {
@@ -110,9 +117,10 @@ export function project({ config, startDate, endDate, balances, ytd = {}, sentAh
         errors.push({ date: p.date, message: err.message });
         continue;
       }
-      for (const line of result.lines) {
+      const lines = ahead ? settleResidual(result.lines, ahead) : result.lines;
+      for (const line of lines) {
         if (!(line.bucketId in bal)) continue; // expenses leave the system
-        const add = Math.max(0, line.cents - (sentAhead[p.date]?.[line.bucketId] || 0)); // already counted if sent early
+        const add = Math.max(0, line.cents - (ahead?.[line.bucketId] || 0)); // already counted if sent early
         bal[line.bucketId] += add;
         principal[line.bucketId] += add;
         const b = buckets.find(x => x.id === line.bucketId);
@@ -131,7 +139,7 @@ export function project({ config, startDate, endDate, balances, ytd = {}, sentAh
       }
       paychecks.push({
         date: p.date, index: p.index, takeHomeCents: pay.takeHomeCents, source: pay.source,
-        phaseId: phase?.id || null, extended, lines: result.lines, notices: result.notices,
+        phaseId: phase?.id || null, extended, lines, notices: result.notices,
         deferralCents: deferral, matchCents: match, missedMatchCents: pay.matchCents - match,
       });
       checkMilestones(p.date);

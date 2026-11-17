@@ -53,15 +53,41 @@ export function monthsBetween(a, b) {
 }
 
 const isWeekend = s => { const w = weekday(s); return w === 0 || w === 6; };
+
+/** The n-th (1-based) given weekday of a month; n = -1 for the last one. */
+function nthWeekday(y, m, wd, n) {
+  if (n > 0) {
+    const first = weekday(iso(y, m, 1));
+    return iso(y, m, 1 + ((wd - first + 7) % 7) + (n - 1) * 7);
+  }
+  const last = daysInMonth(y, m);
+  return iso(y, m, last - ((weekday(iso(y, m, last)) - wd + 7) % 7));
+}
+
+/**
+ * US bank holidays (the Federal Reserve's list), when payroll can't settle. One that falls on a
+ * Sunday is observed on Monday; one on a Saturday isn't moved (banks are open that Friday).
+ */
+export function isBankHoliday(s) {
+  const { y, m, d } = parts(s);
+  const fixed = [[1, 1], [6, 19], [7, 4], [11, 11], [12, 25]];
+  for (const [fm, fd] of fixed) {
+    if (m === fm && d === fd) return weekday(s) !== 6;
+    if (weekday(s) === 1 && addDays(s, -1) === iso(y, fm, fd)) return true; // Sunday holiday → Monday
+  }
+  const floating = [[1, 1, 3], [2, 1, 3], [5, 1, -1], [9, 1, 1], [10, 1, 2], [11, 4, 4]]; // MLK, Presidents, Memorial, Labor, Columbus, Thanksgiving
+  return floating.some(([fm, wd, n]) => m === fm && s === nthWeekday(y, fm, wd, n));
+}
+
 function previousBusinessDay(s) {
   let t = s;
-  while (isWeekend(t)) t = addDays(t, -1);
+  while (isWeekend(t) || isBankHoliday(t)) t = addDays(t, -1);
   return t;
 }
 
 /**
  * Semi-monthly paydays: the 15th and the last business day of the month.
- * A 15th that falls on a weekend is paid the Friday before. Bank holidays are not modelled.
+ * One that falls on a weekend or a bank holiday is paid the business day before.
  * Paycheck index 1 = mid-month, 2 = end of month.
  */
 export function paydaysInMonth(y, m) {

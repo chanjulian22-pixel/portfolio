@@ -324,6 +324,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--ink); outli
 }
 .tick svg { width: 16px; height: 16px; }
 .tick.on { background: var(--ink); box-shadow: none; color: var(--surface); }
+.tick.part { box-shadow: inset 0 0 0 2px var(--ink); background: linear-gradient(to top, var(--ink) 50%, transparent 50%); }
 
 /* ---------- charts ---------- */
 .chart { position: relative; width: 100%; touch-action: pan-y; user-select: none; -webkit-user-select: none; }

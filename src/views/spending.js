@@ -2,7 +2,7 @@ import { doc, ui, saveUi, save, newId } from '../store.js';
 import { chart, meter } from '../charts.js';
 import { money, pct, fmtDate, fmtMonth, esc, ICON, openSheet, toast, todayISO, $, $$ } from '../ui.js';
 import { monthKey, parts, daysInMonth, addMonths } from '../domain/dates.js';
-import { CATEGORIES, categoryById, suggestCategory, monthlyBudget, outstandingWork } from '../domain/spending.js';
+import { CATEGORIES, categoryById, suggestCategory, monthlyBudget, outstandingWork, countsAsSpending } from '../domain/spending.js';
 import { parseCents } from '../domain/money.js';
 import { txRow, sortTx, dateLabel } from './common.js';
 import { cardsView, rankForPurchase } from './cards.js';
@@ -113,7 +113,7 @@ export function spendingView(m) {
   }
   html += `<div class="search">${ICON.search}<input class="input" id="spend-q" type="search" placeholder="Search all transactions" value="${esc(ui.spendQuery || '')}" autocomplete="off"></div>`;
   html += `<div class="card flush">${groups.length ? groups.map(g => {
-    const total = g.items.reduce((a, t) => a + t.cents, 0);
+    const total = g.items.reduce((a, t) => a + (countsAsSpending(t) ? t.cents : 0), 0);
     const label = g.t.undated ? `${fmtMonth(g.t.date.slice(0, 7), { short: true })} · date not recorded` : dateLabel(g.t.date, m.today);
     return `<div class="day-h"><span>${esc(label)}</span><span class="num">${money(total)}</span></div><div class="rows" style="margin:0">${g.items.map(t => txRow(t, m)).join('')}</div>`;
   }).join('') : `<div class="empty"><div class="em">🧾</div>${q ? 'No matches.' : 'No transactions yet this month.'}<br>Tap + to add one.</div>`}</div>`;

@@ -1,12 +1,13 @@
 import { doc, ui, saveUi, save, newId } from '../store.js';
 import { meter, stackBar, chart } from '../charts.js';
-import { money, compact, shares, pct, fmtDate, fmtMonth, timeAgo, esc, ICON, openSheet, toast, $ } from '../ui.js';
+import { money, compact, shares, pct, fmtDate, fmtMonth, timeAgo, esc, ICON, openSheet, toast, todayISO, $ } from '../ui.js';
 import { priceOf, prices } from '../prices.js';
 import { rebalance, sleeveWeights } from '../domain/rebalance.js';
 import { dividendsInYear, dividendCheckMonth, divFreq, fundsDue, DEFAULT_DIV_FREQ } from '../domain/dividends.js';
 import { applyBuys, undoBuys, applyDividend, undoDividend, accountReturns } from '../domain/holdings.js';
 import { parseCents } from '../domain/money.js';
-import { addMonths, monthsBetween } from '../domain/dates.js';
+import { addMonths, addDays, monthsBetween, monthEnd } from '../domain/dates.js';
+import { openLines } from '../domain/paychecks.js';
 import { payrollK401 } from '../domain/balances.js';
 import { bucketColor, notice } from './common.js';
 
@@ -21,6 +22,32 @@ export function liveAccountFor(bucketId) {
   const id = b?.account || b?.heldIn;
   const a = id && doc.accounts.find(x => x.id === id);
   return a && a.holdings.length ? a : null;
+}
+
+/**
+ * A transfer marked as sent, filed under its paycheck. Sent before payday (e.g. buying early on a dip)?
+ * It's dated today — when the money actually moved. Money headed to an investment account waits
+ * there as cash until you log the buy.
+ */
+export function addSent(paycheck, bucketId, cents) {
+  const today = todayISO();
+  const c = { id: newId('c'), bucketId, date: paycheck > today ? today : paycheck, cents, paycheck, at: Date.now() };
+  if (liveAccountFor(bucketId)) c.pendingBuy = true;
+  doc.contributions.push(c);
+  return c;
+}
+
+/** Paycheck transfers into this account that haven't gone out yet, or only partly: recent paychecks
+ *  and the next few. A buy logged from the account can be paid with one of these. */
+function openTransfersInto(m, a) {
+  const ids = new Set(m.buckets.filter(b => b.account === a.id || b.heldIn === a.id).map(b => b.id));
+  const out = [];
+  for (const pd of [...m.recentPaydays, ...m.upcoming.slice(0, 3)]) {
+    const plan = m.planFor(pd);
+    if (!plan.lines || (pd.date < m.today && (!plan.phase || plan.extended))) continue;
+    for (const l of openLines(plan.lines)) if (ids.has(l.bucketId)) out.push({ key: `${pd.date}|${l.bucketId}`, date: pd.date, bucketId: l.bucketId, leftCents: l.leftCents, partial: l.state === 'partial' });
+  }
+  return out;
 }
 
 /** Transfers marked as sent into an account that haven't been logged as buys yet. */
@@ -584,7 +611,11 @@ export function openBuySheet(m, acctId, contribId = null) {
   const a = doc.accounts.find(x => x.id === acctId);
   if (!a) return;
   const c = contribId ? doc.contributions.find(x => x.id === contribId) : null;
-  const sent = c ? c.cents : 0;
+  // From the account's Buy button: the money is usually a paycheck's transfer (maybe sent early).
+  // Pick it here and that transfer is marked as sent, so the plan doesn't ask for it again.
+  const sources = c ? [] : openTransfersInto(m, a);
+  const firstSource = sources.find(s => s.date <= addDays(m.today, 16)) || null;
+  let sent = c ? c.cents : firstSource ? firstSource.leftCents : 0;
   const positions = a.holdings.map(h => { const p = priceOf(h.ticker, doc.tickerMeta); return p ? { ticker: h.ticker, valueCents: Math.round(h.shares * p.cents) } : null; }).filter(Boolean);
   let rows = [];
   if (sent > 0 && a.targets?.length) {
@@ -597,6 +628,7 @@ export function openBuySheet(m, acctId, contribId = null) {
   while (rows.length < 3) rows.push({ ticker: '', cost: 0, shares: '' });
   const tickers = [...new Set([...a.holdings.map(h => h.ticker), ...(a.targets || []).flatMap(s => s.tickers)])];
   const bucket = c ? m.bucketById[c.bucketId] : null;
+  const sourceLabel = s => `${fmtDate(s.date)} paycheck · ${money(s.leftCents, { mask: false })}${s.partial ? ' left' : ''} to ${m.bucketById[s.bucketId]?.label}`;
 
   openSheet({
     title: c ? 'What did you buy?' : `Buy in ${a.name}`,
@@ -604,7 +636,12 @@ export function openBuySheet(m, acctId, contribId = null) {
     body: `
       <p class="note" style="margin:4px 4px 12px">${c
         ? `${money(sent, { mask: false })} sent to ${esc(bucket?.label || a.name)} on ${esc(fmtDate(c.date))}. Enter the shares and cost from Schwab’s receipt — the rows below are a suggestion${a.targets?.length ? ' from your target mix' : ''} at today’s price.`
-        : `Buying with cash already in ${esc(a.name)}${a.cash ? ` (${money(a.cash, { mask: false })} available)` : ''}. Enter the shares and cost from Schwab’s receipt.`}</p>
+        : 'Enter the shares and cost from Schwab’s receipt.'}</p>
+      ${c ? '' : `<label class="field"><span>Paid with</span><select name="source">
+          ${sources.map(s => `<option value="${esc(s.key)}" ${s === firstSource ? 'selected' : ''}>${esc(sourceLabel(s))}</option>`).join('')}
+          <option value="" ${firstSource ? '' : 'selected'}>Cash already in the account${a.cash ? ` (${money(a.cash, { mask: false })})` : ''}</option>
+        </select><div class="hint" id="buy-src-hint"></div></label>
+        <label class="field" id="buy-moved" hidden><span>Moved into the account ($)</span><input name="moved" inputmode="decimal" autocomplete="off" value="${firstSource ? (firstSource.leftCents / 100).toFixed(2) : ''}"></label>`}
       <div class="card" style="padding:14px">
         <div class="amount-grid" style="grid-template-columns:1fr 1fr 1fr"><span class="h">Fund</span><span class="h" style="text-align:right">Shares</span><span class="h" style="text-align:right">Cost ($)</span>
         ${rows.map((r, i) => `<input name="tk_${i}" list="buy-tickers" autocapitalize="characters" autocomplete="off" placeholder="—" value="${esc(r.ticker)}" style="text-align:left">
@@ -619,7 +656,20 @@ export function openBuySheet(m, acctId, contribId = null) {
       ${c ? '<button type="button" class="btn block" id="buy-later">Log it later</button><p class="note" style="text-align:center">Until you log it, the transfer counts as cash in the account.</p>' : ''}`,
     onMount: (root, sheet) => {
       const f = sheet.form.elements;
+      const source = () => (f.source ? sources.find(s => s.key === f.source.value) || null : null);
+      const syncSource = fill => {
+        if (!f.source) return;
+        const s = source();
+        $('#buy-moved', root).hidden = !s;
+        if (s && fill) f.moved.value = (s.leftCents / 100).toFixed(2);
+        $('#buy-src-hint', root).textContent = s
+          ? `Marks this transfer as sent in your plan${s.date > m.today ? ' — early, before payday' : ''}.`
+          : sources.length ? 'Not from a paycheck: your plan still expects those transfers.' : 'Uses money that’s already sitting in the account.';
+      };
+      f.source?.addEventListener('change', () => { syncSource(true); sum(); });
       const sum = () => {
+        if (f.source) { const s = source(), mv = parseCents(f.moved.value); sent = s && Number.isFinite(mv) && mv > 0 ? mv : 0; }
+        const paid = !!(c || source());
         let spent = 0;
         const after = {};
         for (let i = 0; i < rows.length; i++) {
@@ -629,13 +679,14 @@ export function openBuySheet(m, acctId, contribId = null) {
           if (t && sh > 0) after[t] = (after[t] ?? (a.holdings.find(h => h.ticker === t)?.shares || 0)) + sh;
         }
         const left = sent - spent;
-        $('#buy-sum', root).innerHTML = esc(c
+        $('#buy-sum', root).innerHTML = esc(paid
           ? `Spent ${money(spent, { mask: false })} of ${money(sent, { mask: false })}${left > 0 ? ` · ${money(left, { mask: false })} stays as cash` : left < 0 ? ` · ${money(-left, { mask: false })} comes from cash already in the account` : ''}`
           : `Spent ${money(spent, { mask: false })} from the account’s cash`)
           // Catch double counts before saving: the totals should match your brokerage's quantity after the trade.
           + (Object.keys(after).length ? `<div class="mt8">After saving: <strong>${esc(Object.entries(after).map(([t, n]) => `${t} ${+n.toFixed(4)} sh`).join(' · '))}</strong> — should match your brokerage.</div>` : '');
       };
       root.addEventListener('input', sum);
+      syncSource(false);
       sum();
       $('#buy-later', root)?.addEventListener('click', () => { sheet.close(); toast('Saved — log the buy from Invest when it fills'); });
     },
@@ -655,6 +706,15 @@ export function openBuySheet(m, acctId, contribId = null) {
       if (!buys.length) return err('Enter at least one fund — or tap “Log it later”.');
       const tradeDate = f.tradeDate.value;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(tradeDate) || tradeDate > m.today) return err('Pick the trade date from the receipt.');
+      // Paid with a paycheck's transfer: record that transfer as sent, then file the buy under it.
+      const src = f.source ? sources.find(s => s.key === f.source.value) || null : null;
+      let paidBy = c;
+      if (src) {
+        const moved = parseCents(f.moved.value);
+        if (!(moved > 0)) return err('Enter how much you moved into the account for this buy.');
+        sent = moved;
+        paidBy = addSent(src.date, src.bucketId, moved);
+      }
       // A few cents over the transfer is fine — it came from spare cash already in the account.
       const r = applyBuys({ holdings: a.holdings, cash: a.cash, buys, sentCents: sent });
       a.holdings = r.holdings;
@@ -663,15 +723,15 @@ export function openBuySheet(m, acctId, contribId = null) {
       const batch = newId('k');
       const ids = buys.map(b => {
         const id = newId('b');
-        doc.purchases.push({ id, batch, batchCashDeltaCents: r.cashDeltaCents, date: tradeDate, accountId: a.id, ticker: b.ticker, shares: b.shares, costCents: b.costCents, ...(c ? { contributionId: c.id } : {}) });
+        doc.purchases.push({ id, batch, batchCashDeltaCents: r.cashDeltaCents, date: tradeDate, accountId: a.id, ticker: b.ticker, shares: b.shares, costCents: b.costCents, ...(paidBy ? { contributionId: paidBy.id } : {}) });
         return id;
       });
-      if (c) {
-        Object.assign(c, { pendingBuy: false, buyIds: ids, leftoverCents: r.leftoverCents, cashDeltaCents: r.cashDeltaCents });
-        if (tradeDate < c.date) c.date = tradeDate; // the money had clearly moved by the trade date
+      if (paidBy) {
+        Object.assign(paidBy, { pendingBuy: false, buyIds: ids, leftoverCents: r.leftoverCents, cashDeltaCents: r.cashDeltaCents });
+        if (tradeDate < paidBy.date) paidBy.date = tradeDate; // the money had clearly moved by the trade date
       }
       save();
-      toast(`Logged ${buys.map(b => `${b.ticker} +${+b.shares.toFixed(4)}`).join(', ')}`);
+      toast(`Logged ${buys.map(b => `${b.ticker} +${+b.shares.toFixed(4)}`).join(', ')}${src ? ` · ${fmtDate(src.date)} transfer marked as sent` : ''}`);
       rerender();
     },
   });
@@ -721,7 +781,8 @@ export function openDividendSheet(m, { month = null, acctId = null } = {}) {
         const r = applyDividend({ holdings: acct.holdings, cash: acct.cash, ticker: e.ticker, cents: e.cents, shares: e.shares });
         acct.holdings = r.holdings;
         acct.cash = r.cash;
-        doc.dividends.push({ id: newId('d'), date: m.today, month: month || m.today.slice(0, 7), accountId: e.accountId, ticker: e.ticker, cents: e.cents, shares: e.shares || undefined });
+        const paidOn = month && m.today.slice(0, 7) > month ? monthEnd(month + '-01') : m.today;
+        doc.dividends.push({ id: newId('d'), date: paidOn, month: month || m.today.slice(0, 7), accountId: e.accountId, ticker: e.ticker, cents: e.cents, shares: e.shares || undefined });
       }
       if (month) doc.dividendChecks[month] = true;
       save();
@@ -741,11 +802,9 @@ function rebalanceBox(m, a, positions, bucket) {
     let counted = 0;
     for (const pd of m.upcoming) {
       if (counted === 2) break;
-      const plan = m.planFor(pd);
-      if (plan.done[bucket.id] > 0) continue;
-      const cents = (plan.lines || []).find(l => l.bucketId === bucket.id)?.cents || 0;
-      if (!cents) continue;
-      amount += cents;
+      const l = openLines(m.planFor(pd).lines).find(x => x.bucketId === bucket.id);
+      if (!l) continue;
+      amount += l.leftCents;
       counted++;
     }
     hint = amount ? 'your next two transfers here' : '';

@@ -112,7 +112,7 @@ function tiles(m) {
   }
   let saved = payroll;
   for (const c of doc.contributions) {
-    if (monthKey(c.date) === month && c.date <= m.today && isAsset(m.bucketById[c.bucketId])) saved += c.cents;
+    if (monthKey(c.paycheck || c.date) === month && c.date <= m.today && isAsset(m.bucketById[c.bucketId])) saved += c.cents;
   }
   const owe = m.loans.filter(l => l.direction === 'i-owe').reduce((a, l) => a + l.balance, 0);
   const small = icon => icon.replace('<svg', '<svg width="14" height="14"');
@@ -171,7 +171,7 @@ function paycheckCard(m) {
   const days = daysBetween(m.today, m.next.date);
   const lines = (plan.lines || []).filter(l => l.cents > 0);
   const parts = lines.map(l => ({ cents: l.cents, color: bucketColor(m.bucketById[l.bucketId]), label: m.bucketById[l.bucketId]?.label }));
-  const sent = lines.filter(l => plan.done[l.bucketId] > 0).length;
+  const sent = lines.filter(l => l.state === 'full' || l.state === 'catchup').length;
   return `<button class="card" data-tab="plan" style="display:block;width:100%;text-align:left">
     <div class="card-h"><h2>Next paycheck</h2><span class="link">${esc(fmtDate(m.next.date, { weekday: true }))} · ${relDays(days)}${ICON.chevR}</span></div>
     <div class="between" style="align-items:flex-end;margin-bottom:12px">
@@ -194,7 +194,12 @@ export function alerts(m) {
   const waiting = doc.accounts.flatMap(a => pendingBuys(a.id).map(c => ({ a, c })));
   if (waiting.length) out.push({ icon: ICON.invest, text: `${waiting.length} transfer${waiting.length > 1 ? 's' : ''} waiting to be logged as a buy (${esc(waiting.map(w => `${w.a.name} ${money(w.c.cents)}`).join(', '))}).`, action: '<button class="btn small" data-tab="invest">Open Invest</button>' });
   for (const e of m.phaseErrors) out.push({ tone: 'bad', icon: ICON.alert, text: `Plan problem: ${esc(e)}`, action: '<button class="btn small" data-action="edit-phases">Fix plan</button>' });
-  for (const u of m.unsent) out.push({ icon: ICON.clock, text: `${u.open} transfer${u.open > 1 ? 's' : ''} from your ${esc(fmtDate(u.date))} paycheck ${u.open > 1 ? 'aren’t' : 'isn’t'} marked as sent.`, action: `<button class="btn small" data-action="open-paycheck" data-date="${u.date}">Review</button>` });
+  for (const u of m.unsent) {
+    const text = u.partial === u.open
+      ? `Your ${esc(fmtDate(u.date))} paycheck still has ${money(u.leftCents)} to send — part of ${u.open > 1 ? `${u.open} transfers` : 'a transfer'} went out.`
+      : `${u.open} transfer${u.open > 1 ? 's' : ''} from your ${esc(fmtDate(u.date))} paycheck ${u.open > 1 ? 'aren’t' : 'isn’t'} marked as sent.`;
+    out.push({ icon: ICON.clock, text, action: `<button class="btn small" data-action="open-paycheck" data-date="${u.date}">Review</button>` });
+  }
   if (m.hasIncome && m.next) {
     const plan = m.planFor(m.next);
     for (const n of plan.notices || []) {

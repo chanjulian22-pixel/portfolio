@@ -370,14 +370,20 @@ function creditHints(card, cat, today, merchant, txs = []) {
   }).filter(Boolean);
 }
 
-/** Total credits used (marked, or used by logged purchases) in periods that start inside [from, to]. */
+/**
+ * Total credits used (marked, or used by logged purchases) in periods that start inside [from, to].
+ * A period that began before the card was opened (a 2026 credit on a card opened in November) counts
+ * from the opening month.
+ */
 export function creditsInRange(card, from, to, txs = []) {
   let total = 0;
+  const first = card.opened ? card.opened + '-01' : '';
   for (const credit of card.credits || []) {
     const marked = card.owned?.creditsUsed?.[credit.id] || {};
     const auto = autoUse(card, credit, txs);
     for (const key of new Set([...Object.keys(marked), ...Object.keys(auto)])) {
-      const start = periodStart(key);
+      let start = periodStart(key);
+      if (start && start < first) start = first;
       if (start && start >= from && start <= to) total += Math.max(marked[key] || 0, auto[key] || 0);
     }
   }
@@ -389,6 +395,9 @@ function cardYearOf(opened, today) {
   const om = Number(opened.slice(5, 7));
   let start = iso(Number(today.slice(0, 4)), om, 1);
   if (start > today) start = iso(Number(today.slice(0, 4)) - 1, om, 1);
+  // Nothing comes before the first card year: if the card was opened a few days before the month you
+  // chose (account opened Oct 23, first statement in November), those days belong to the first year.
+  if (start < opened + '-01') start = opened + '-01';
   return { start, end: addDays(addMonths(start, 12), -1) };
 }
 

@@ -10,6 +10,7 @@ import { taxYear } from './domain/taxdata.js';
 import { todayISO } from './ui.js';
 import { catalogState } from './cardsCatalog.js';
 import { resolveCard } from './domain/cards.js';
+import { lineState, openLines, settleResidual } from './domain/paychecks.js';
 
 let cache = null;
 
@@ -17,7 +18,7 @@ export function model() {
   const today = todayISO();
   const key = `${docVersion()}|${prices.lastRefresh}|${today}`;
   if (cache && cache.key === key) return cache.m;
-  const m = build(today);
+  const m = buildModel(today);
   cache = { key, m };
   return m;
 }
@@ -25,13 +26,35 @@ export const invalidate = () => { cache = null; };
 
 const centsOf = bal => Object.fromEntries(Object.entries(bal).map(([k, v]) => [k, v.cents]));
 
-function build(today) {
+/** The model for a given day (exported so tests can pin the date). */
+export function buildModel(today) {
   const config = doc.config;
   const buckets = config.buckets;
   const bucketById = Object.fromEntries(buckets.map(b => [b.id, b]));
   const periods = config.profile?.payPeriodsPerYear || 24;
   const accountValues = Object.fromEntries(doc.accounts.map(a => [a.id, accountValue(a, doc.tickerMeta)]));
-  const ledgerAt = asOf => bucketBalances({ config, snapshots: doc.snapshots, contributions: doc.contributions, transactions: doc.transactions, accountValues, asOf });
+
+  /**
+   * Bucket balances as of a date. `excludePaycheck`: leave out the transfers of that payday, to see
+   * where things stood before its money arrived (even the part you sent early).
+   */
+  const ledgerAt = (asOf, { excludePaycheck = null } = {}) => {
+    const contributions = excludePaycheck ? doc.contributions.filter(c => c.paycheck !== excludePaycheck) : doc.contributions;
+    const out = bucketBalances({ config, snapshots: doc.snapshots, contributions, transactions: doc.transactions, accountValues, asOf });
+    if (asOf >= today) return out;
+    // An investment account's live value is today's. For a past date, use what was recorded that day.
+    let h = null;
+    for (const x of doc.history) if (x.byBucket && x.date <= asOf && (!h || x.date >= h.date)) h = x;
+    if (!h) return out;
+    for (const [id, bal] of Object.entries(out)) {
+      if (bal.source !== 'live' || !Number.isInteger(h.byBucket[id])) continue;
+      let cents = h.byBucket[id];
+      if (excludePaycheck) for (const c of doc.contributions) if (c.paycheck === excludePaycheck && c.bucketId === id && c.date <= h.date) cents -= c.cents;
+      out[id] = { ...bal, cents };
+    }
+    return out;
+  };
+
   const balances = ledgerAt(today);
   const nw = netWorth(balances, buckets, doc.loans, doc.transactions);
   const ytd = ytdAll({ config, contributions: doc.contributions, asOf: today });
@@ -39,79 +62,103 @@ function build(today) {
   const hasIncome = config.incomes.some(i => i.annualGrossCents > 0);
   const hasData = hasIncome || doc.snapshots.length > 0 || doc.transactions.length > 0 || Object.values(accountValues).some(a => a.hasPositions);
 
-  // Transfers already made for paydays that haven't happened yet (e.g. buying early on a market dip).
-  // They're in today's balances, so the projection mustn't add them again on the payday.
+  // Transfers already made for today's or a later payday (e.g. buying early on a market dip).
+  // They're in today's balances, so the forecast mustn't add them again on the payday.
   const sentAhead = {};
   for (const c of doc.contributions) {
-    if (!c.paycheck || c.paycheck <= today || c.date > today) continue;
+    if (!c.paycheck || c.paycheck < today || c.date > today) continue;
     (sentAhead[c.paycheck] ||= {})[c.bucketId] = (sentAhead[c.paycheck][c.bucketId] || 0) + c.cents;
   }
 
-  const projections = {};
-  const projection = months => {
-    if (!hasIncome) return null;
-    if (!projections[months]) {
-      projections[months] = project({ config, startDate: today, endDate: addMonths(today, months), balances: centsOf(balances), ytd, sentAhead, catchUp });
+  /** What's been marked as sent for a payday, per bucket, and the lines you said are finished. */
+  const sentFor = date => {
+    const done = {}, final = {};
+    for (const c of doc.contributions) {
+      if (c.paycheck !== date) continue;
+      done[c.bucketId] = (done[c.bucketId] || 0) + c.cents;
+      if (c.final) final[c.bucketId] = true;
     }
-    return projections[months];
+    return { done, final };
   };
+  /** Each planned line with what's been sent and where it stands (none / partial / full / catchup). */
+  const withState = (pd, lines, { done, final }) => settleResidual(lines, done).map(l => {
+    const sentCents = done[l.bucketId] || 0;
+    return { ...l, sentCents, ...lineState({ line: l, sentCents, final: !!final[l.bucketId], payday: pd.date, today }) };
+  });
 
-  const doneFor = date => {
-    const out = {};
-    for (const c of doc.contributions) if (c.paycheck === date) out[c.bucketId] = (out[c.bucketId] || 0) + c.cents;
-    return out;
-  };
-
-  /** The allocation for one payday: simulated for future paychecks, from the ledger for past ones. */
-  const planFor = pd => {
+  /** A past payday's plan, from where the buckets stood the day before — leaving out that paycheck's
+   *  own transfers, so sending early doesn't change what its plan was. */
+  const pastPlan = pd => {
     const pay = payFor(pd.date, config.incomes, periods);
     const { phase, extended } = phaseOn(pd.date, config.phases);
-    const base = { ...pd, pay, phase, extended, done: doneFor(pd.date) };
+    const sent = sentFor(pd.date);
+    const base = { ...pd, pay, phase, extended, done: sent.done };
     if (!pay) return base;
-    if (pd.date > today) {
-      const months = Math.max(2, Math.ceil(daysBetween(today, pd.date) / 30) + 1);
-      const pc = projection(Math.max(24, months))?.paychecks.find(p => p.date === pd.date);
-      if (pc) return { ...base, lines: pc.lines, notices: pc.notices, deferralCents: pc.deferralCents, matchCents: pc.matchCents };
-    }
     const asOf = addDays(pd.date, -1);
     try {
       const r = allocatePaycheck({
-        takeHomeCents: pay.takeHomeCents, index: pd.index, date: pd.date, buckets, phase,
-        sweeps: config.sweeps, balances: centsOf(ledgerAt(asOf)), ytd: ytdAll({ config, contributions: doc.contributions, asOf }),
+        takeHomeCents: pay.takeHomeCents, index: pd.index, date: pd.date, buckets, phase, sweeps: config.sweeps,
+        balances: centsOf(ledgerAt(asOf, { excludePaycheck: pd.date })),
+        ytd: ytdAll({ config, contributions: doc.contributions.filter(c => c.paycheck !== pd.date), asOf }),
       });
-      return { ...base, lines: r.lines, notices: r.notices, deferralCents: pay.deferralCents, matchCents: pay.matchCents };
+      return { ...base, lines: withState(pd, r.lines, sent), notices: r.notices, deferralCents: pay.deferralCents, matchCents: pay.matchCents };
     } catch (e) {
       if (!(e instanceof AllocationError)) throw e;
       return { ...base, error: e.message };
     }
   };
 
-  // Raised a paycheck this month after its transfers went out (e.g. more spending money)? What it
-  // still owes a bucket comes out of the next paycheck, so the plan doesn't quietly invest it.
-  // Lines never sent at all stay on the "not marked as sent" reminder instead.
+  // A bucket that got less than the plan now says, from a paycheck earlier this month (e.g. you
+  // raised spending money after sending it): the next paycheck makes it up, so the plan doesn't
+  // quietly invest that money. Lines never sent at all stay on the "not sent" reminder instead.
   const catchUp = {};
   for (const pd of paydaysBetween(today.slice(0, 8) + '01', addDays(today, -1))) {
-    const plan = planFor(pd);
+    const plan = pastPlan(pd);
     if (!plan.lines || !plan.phase || plan.extended) continue;
-    for (const l of plan.lines) {
-      const done = plan.done[l.bucketId] || 0;
-      if (!l.residual && done > 0) catchUp[l.bucketId] = (catchUp[l.bucketId] || 0) + l.cents - done;
-    }
+    for (const l of plan.lines) if (l.state === 'catchup') catchUp[l.bucketId] = (catchUp[l.bucketId] || 0) + l.leftCents;
   }
-  for (const id of Object.keys(catchUp)) if (catchUp[id] <= 0) delete catchUp[id];
+
+  const projections = {};
+  const projection = months => {
+    if (!hasIncome) return null;
+    if (!projections[months]) {
+      projections[months] = project({ config, startDate: today, endDate: addMonths(today, months), balances: centsOf(balances), ytd, sentAhead, catchUp, includeStart: true });
+    }
+    return projections[months];
+  };
+
+  /** The allocation for one payday: today's and upcoming ones come from the forecast (so they
+   *  include any catch-up), past ones from the ledger. */
+  const planFor = pd => {
+    if (pd.date < today) return pastPlan(pd);
+    const pay = payFor(pd.date, config.incomes, periods);
+    const { phase, extended } = phaseOn(pd.date, config.phases);
+    const sent = sentFor(pd.date);
+    const base = { ...pd, pay, phase, extended, done: sent.done };
+    if (!pay) return base;
+    const months = Math.max(2, Math.ceil(daysBetween(today, pd.date) / 30) + 1);
+    const proj = projection(Math.max(24, months));
+    const pc = proj?.paychecks.find(p => p.date === pd.date);
+    if (pc) return { ...base, lines: withState(pd, pc.lines, sent), notices: pc.notices, deferralCents: pc.deferralCents, matchCents: pc.matchCents };
+    const failed = proj?.errors.find(e => e.date === pd.date);
+    return failed ? { ...base, error: failed.message } : base;
+  };
 
   const next = nextPayday(today);
   const recentPaydays = paydaysBetween(addDays(today, -62), addDays(today, -1));
   const upcoming = paydaysBetween(today, addMonths(today, 4)).slice(0, 8);
+  // Every payday the plan has covered so far, oldest first — past paychecks stay viewable.
+  const planStart = [...config.phases.map(p => p.startDate), ...doc.contributions.map(c => c.paycheck).filter(Boolean)].sort()[0];
+  const pastPaydays = hasIncome && planStart && planStart < today ? paydaysBetween(planStart, addDays(today, -1)) : [];
 
-  // Paychecks whose transfers you haven't marked as sent yet (only ones covered by your plan).
+  // Recent paychecks with transfers not sent yet, or only partly sent (only ones covered by your plan).
   const unsent = [];
   if (hasIncome) {
     for (const pd of recentPaydays) {
-      const plan = planFor(pd);
+      const plan = pastPlan(pd);
       if (!plan.lines || !plan.phase || plan.extended) continue;
-      const open = plan.lines.filter(l => l.cents > 0 && !(plan.done[l.bucketId] > 0));
-      if (open.length) unsent.push({ ...pd, open: open.length });
+      const open = openLines(plan.lines);
+      if (open.length) unsent.push({ ...pd, open: open.length, partial: open.filter(l => l.state === 'partial').length, leftCents: open.reduce((a, l) => a + l.leftCents, 0) });
     }
   }
 
@@ -155,7 +202,7 @@ function build(today) {
   return {
     catalog, cards, cardPrefs: doc.cardPrefs || {},
     today, config, buckets, bucketById, periods, accountValues, balances, nw, ytd, phaseErrors,
-    hasIncome, hasData, projection, planFor, next, upcoming, recentPaydays, unsent, burn, runway, goals, liveTickers,
+    hasIncome, hasData, projection, planFor, next, upcoming, recentPaydays, pastPaydays, unsent, catchUp, burn, runway, goals, liveTickers,
     quoteTime: latestQuoteTime(liveTickers),
     monthBudget: month => monthlyBudget(config, month),
     monthSummary: month => monthSummary(doc.transactions, month),
