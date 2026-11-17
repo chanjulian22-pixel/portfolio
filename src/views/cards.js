@@ -11,6 +11,7 @@ import {
 import { parseCents } from '../domain/money.js';
 import { addMonths, monthsBetween, daysBetween } from '../domain/dates.js';
 import { notice } from './common.js';
+import { frequentItems } from '../domain/insights.js';
 
 const rerender = () => window.dispatchEvent(new Event('ledger:render'));
 const rateText = (card, rate) => card.program === 'cash' ? `${+rate}% back` : `${+rate}x ${card.program === 'MR' ? 'Amex points' : card.program === 'UR' ? 'Chase points' : 'points'}`;
@@ -97,10 +98,12 @@ export function openWhichCard(m) {
   if (!m.cards.length) { openAddCard(m); return; }
   let picked = null; // a category tapped by hand wins over the guess
   let best = null, cat = null;
+  const often = frequentItems(doc.transactions, m.today, 8);
   const names = [...new Set([...MERCHANTS.map(x => x.name), ...[...doc.transactions].reverse().filter(t => t.cents > 0).map(t => t.item)])].slice(0, 250);
   openSheet({
     title: 'Which card?',
     body: `
+      ${often.length ? `<div class="chips" id="wc-often" style="margin-top:2px">${often.map(q => `<button type="button" class="chip" data-place="${esc(q.item)}">${esc(q.item)}</button>`).join('')}</div>` : ''}
       <label class="field"><span>Where are you paying?</span><input name="where" list="wc-list" autocomplete="off" autocapitalize="words" maxlength="80" placeholder="e.g. Trader Joe’s, Uber, Shell"></label>
       <datalist id="wc-list">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
       <div class="chips" id="wc-cats"></div>
@@ -108,7 +111,7 @@ export function openWhichCard(m) {
       <div id="wc-out"></div>`,
     onMount: (root, sheet) => {
       const f = sheet.form.elements;
-      setTimeout(() => f.where.focus(), 350);
+      if (!often.length) setTimeout(() => f.where.focus(), 350);
       const draw = () => {
         const text = f.where.value.trim();
         const merchant = merchantFor(text);
@@ -175,6 +178,10 @@ export function openWhichCard(m) {
           sheet.close();
           setTimeout(() => window.dispatchEvent(new CustomEvent('ledger:new-tx', { detail })), 230);
         }
+      });
+      $('#wc-often', root)?.addEventListener('click', e => {
+        const b = e.target.closest('[data-place]');
+        if (b) { f.where.value = b.dataset.place; picked = null; draw(); }
       });
       f.where.addEventListener('input', () => { picked = null; draw(); });
       f.amount.addEventListener('input', draw);

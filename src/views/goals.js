@@ -4,6 +4,7 @@ import { money, compact, pct, fmtDate, fmtMonth, esc, ICON } from '../ui.js';
 import { monthsBetween, daysBetween } from '../domain/dates.js';
 import { phaseOn, plannedFor } from '../domain/allocation.js';
 import { bucketColor, notice } from './common.js';
+import { whatIfCard, mountWhatIf } from './insights.js';
 
 function milestoneText(ms, m) {
   const b = m.bucketById[ms.bucketId];
@@ -47,6 +48,8 @@ export function goalsView(m) {
     <details class="data"><summary>Show as table</summary><table><tr><th>Month</th><th>Contributed</th><th>Growth</th><th>Total</th></tr>
       ${proj.points.filter((p, i) => i === 0 || p.date.slice(5, 7) % 3 === 0 || i === proj.points.length - 1).map(p => `<tr><td>${esc(fmtMonth(p.date.slice(0, 7), { short: true }))}</td><td>${compact(p.principal)}</td><td>${compact(p.growth)}</td><td>${compact(p.total)}</td></tr>`).join('')}</table></details>
   </div>`;
+
+  html += whatIfCard(m);
 
   // runway
   if (m.runway != null) {
@@ -98,7 +101,7 @@ export function goalsView(m) {
     </div>`;
   }
   if (proj.errors.length) html += notice({ icon: ICON.alert, text: `${proj.errors.length} paycheck${proj.errors.length > 1 ? 's' : ''} in this window can’t be allocated: ${esc(proj.errors[0].message)}` });
-  return { title: 'Goals', html };
+  return { title: 'Goals', html, after: () => mountWhatIf(m) };
 }
 
 function lastPhaseEnd(m) {

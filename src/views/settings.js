@@ -436,6 +436,7 @@ export function openPrices() {
 async function exportBackup() {
   const name = `ledger-backup-${todayISO()}.json`;
   const file = new File([exportJSON()], name, { type: 'application/json' });
+  ui.lastExport = todayISO(); saveUi(); rerender();
   try {
     if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; }
   } catch (e) { if (e?.name === 'AbortError') return; }

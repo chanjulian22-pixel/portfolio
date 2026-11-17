@@ -12,6 +12,7 @@ import { settingsActions, importFile } from './views/settings.js';
 import { cardActions, openWhichCard } from './views/cards.js';
 import { loadCatalog } from './cardsCatalog.js';
 import { DEMO } from './demo.js';
+import { insightActions } from './views/insights.js';
 
 const TABS = [
   { id: 'home', label: 'Home', icon: ICON.home, view: homeView },
@@ -20,7 +21,7 @@ const TABS = [
   { id: 'invest', label: 'Invest', icon: ICON.invest, view: investView },
   { id: 'goals', label: 'Goals', icon: ICON.goals, view: goalsView },
 ];
-const ACTIONS = { ...homeActions, ...spendingActions, ...planActions, ...investActions, ...goalsActions, ...settingsActions, ...cardActions };
+const ACTIONS = { ...homeActions, ...spendingActions, ...planActions, ...investActions, ...goalsActions, ...settingsActions, ...cardActions, ...insightActions };
 
 function applyTheme() {
   const t = ui.theme;

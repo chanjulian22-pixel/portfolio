@@ -7,15 +7,18 @@ import { txRow, sortTx, notice, bucketColor, deltaHtml } from './common.js';
 import { dividendCheck, pendingBuys, returnsFor } from './invest.js';
 import { outstandingWork } from '../domain/spending.js';
 import { cardAlerts, cheatSheet } from './cards.js';
+import { todayCard, upcomingCard } from './insights.js';
 
 export function homeView(m) {
   if (!m.hasData) return { title: 'Ledger', html: onboarding() };
   let html = '';
+  html += todayCard(m);
   html += cheatSheet(m);
   html += netWorthSection(m);
   html += tiles(m);
   html += spendingCard(m);
   html += paycheckCard(m);
+  html += upcomingCard(m);
   html += alertsCard(m);
   html += goalsCard(m);
   html += recentCard(m);
@@ -224,6 +227,10 @@ export function alerts(m) {
   const missed = proj?.paychecks.filter(p => p.missedMatchCents > 0) || [];
   if (missed.length) out.push({ tone: 'bad', icon: ICON.alert, text: `You’d hit the 401(k) limit early and miss ${money(missed.reduce((a, p) => a + p.missedMatchCents, 0))} of employer match.` });
   out.push(...cardAlerts(m));
+  const lastBackup = ui.lastExport || '';
+  if (doc.transactions.length > 20 && (!lastBackup || daysBetween(lastBackup, m.today) > 30)) {
+    out.push({ icon: ICON.shield, text: `${lastBackup ? `Your last backup was ${esc(fmtDate(lastBackup, { year: true }))}.` : 'You haven’t saved a backup yet.'} Your data lives only on this phone — save a copy to Files.`, action: '<button class="btn small" data-action="export">Back up now</button>' });
+  }
   for (const t of m.config.todos || []) {
     if (doc.dismissed.includes(t.id)) continue;
     out.push({ icon: ICON.flag, text: esc(t.text), action: `<button class="btn small" data-action="dismiss-todo" data-id="${esc(t.id)}">${ICON.check}Done</button>` });

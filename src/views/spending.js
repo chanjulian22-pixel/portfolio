@@ -8,6 +8,8 @@ import { txRow, sortTx, dateLabel } from './common.js';
 import { cardsView, rankForPurchase } from './cards.js';
 import { rewardCatById } from '../domain/cards.js';
 import { loanBalance } from '../domain/balances.js';
+import { spendingInsights } from './insights.js';
+import { frequentItems } from '../domain/insights.js';
 
 const curMonth = m => {
   const now = monthKey(m.today);
@@ -57,6 +59,8 @@ export function spendingView(m) {
     html += `<div class="notice"><span class="ico">💼</span><div style="flex:1;min-width:0"><p><strong>Work owes you ${money(owed.cents)}</strong> for ${owed.items.length} expense${owed.items.length > 1 ? 's' : ''} (oldest ${esc(fmtDate(owed.oldest))}). Not counted in your spending.</p>
       <div class="actions"><button class="btn small" data-action="work-reimbursed">Mark reimbursed</button></div></div></div>`;
   }
+
+  html += spendingInsights(m, month);
 
   // six-month trend
   const months = [];
@@ -147,6 +151,7 @@ export function openTxSheet(m, tx = null, defaults = {}) {
   ];
   const paidFrom = t.work ? 'work' : t.loanId ? `loan:${t.loanId}` : t.fundedBy || '';
 
+  const quick = frequentItems(doc.transactions, m.today); // one-tap repeats of things you buy often
   const catGrid = () => CATEGORIES.map(c => `<button type="button" data-cat="${c.id}" class="${c.id === category ? 'on' : ''}"><span>${c.emoji}</span>${esc(c.label.split(' ')[0])}</button>`).join('');
   openSheet({
     title: isNew ? 'New transaction' : 'Edit transaction',
@@ -154,6 +159,7 @@ export function openTxSheet(m, tx = null, defaults = {}) {
     body: `
       <div class="seg" id="tx-sign"><button type="button" data-s="1" class="${sign > 0 ? 'on' : ''}">Spent</button><button type="button" data-s="-1" class="${sign < 0 ? 'on' : ''}">Money back</button></div>
       <div class="amount-input"><span>$</span><input name="amount" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${t.cents ? (Math.abs(t.cents) / 100).toFixed(2) : ''}"></div>
+      ${isNew && quick.length ? `<div class="chips" id="tx-quick" style="margin-top:2px">${quick.map((q, i) => `<button type="button" class="chip" data-q="${i}">${esc(q.item)}${q.cents ? `<small>${money(q.cents, { mask: false })}</small>` : ''}</button>`).join('')}</div>` : ''}
       <label class="field"><span>What was it?</span><input name="what" list="tx-items" autocomplete="off" autocapitalize="sentences" maxlength="80" placeholder="e.g. Chipotle" value="${esc(t.item)}"></label>
       <datalist id="tx-items">${items.map(i => `<option value="${esc(i)}">`).join('')}</datalist>
       <div class="field"><span>Category</span><div class="cat-grid" id="tx-cats">${catGrid()}</div></div>
@@ -214,6 +220,15 @@ export function openTxSheet(m, tx = null, defaults = {}) {
       f.what.addEventListener('input', () => { recat(); cardHint(); });
       if (isNew && t.item && !picked) recat();
       cardHint();
+      $('#tx-quick', root)?.addEventListener('click', e => {
+        const q = quick[e.target.closest('[data-q]')?.dataset.q];
+        if (!q) return;
+        f.what.value = q.item;
+        if (q.cents && !amount.value) amount.value = (q.cents / 100).toFixed(2);
+        if (q.category) { category = q.category; picked = true; $('#tx-cats', root).innerHTML = catGrid(); }
+        cardHint(); fromHint();
+        if (!amount.value) amount.focus();
+      });
       f.undated.addEventListener('change', () => { f.date.disabled = f.undated.checked; });
       // Say what "Paid from" does with this purchase (for a loan, the balance before and after)
       const fromHint = () => {

@@ -144,6 +144,19 @@ export function buildModel(today) {
     return failed ? { ...base, error: failed.message } : base;
   };
 
+  /** The forecast if you moved `deltaMonthlyCents` a month from spending money into investing (negative: the other way). */
+  const whatIf = (deltaMonthlyCents, months) => {
+    const spendId = buckets.find(b => b.isSpending)?.id;
+    const alt = JSON.parse(JSON.stringify(config));
+    if (spendId) for (const ph of alt.phases) {
+      const a = ph.amounts[spendId] || (ph.amounts[spendId] = { p1: 0, p2: 0 });
+      let d = deltaMonthlyCents;
+      const take = Math.min(d, a.p1); a.p1 -= take; d -= take;   // raising spending makes p1 larger (take < 0)
+      if (d > 0) a.p2 = Math.max(0, a.p2 - d);
+    }
+    return project({ config: alt, startDate: today, endDate: addMonths(today, months), balances: centsOf(balances), ytd, sentAhead, catchUp, includeStart: true });
+  };
+
   const next = nextPayday(today);
   const recentPaydays = paydaysBetween(addDays(today, -62), addDays(today, -1));
   const upcoming = paydaysBetween(today, addMonths(today, 4)).slice(0, 8);
@@ -202,7 +215,7 @@ export function buildModel(today) {
   return {
     catalog, cards, cardPrefs: doc.cardPrefs || {},
     today, config, buckets, bucketById, periods, accountValues, balances, nw, ytd, phaseErrors,
-    hasIncome, hasData, projection, planFor, next, upcoming, recentPaydays, pastPaydays, unsent, catchUp, burn, runway, goals, liveTickers,
+    hasIncome, hasData, projection, planFor, next, upcoming, recentPaydays, pastPaydays, unsent, catchUp, whatIf, burn, runway, goals, liveTickers,
     quoteTime: latestQuoteTime(liveTickers),
     monthBudget: month => monthlyBudget(config, month),
     monthSummary: month => monthSummary(doc.transactions, month),
