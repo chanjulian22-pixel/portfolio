@@ -249,6 +249,50 @@ function remindersCard(m) {
   </div>`;
 }
 
+/**
+ * How much of one credit you've used this period: type an amount, or tap All of it / Not used.
+ * Purchases logged on the card can fill a credit by themselves (Lyft, Uber Cash…); what you enter
+ * here counts when it's more than that.
+ */
+function openCreditEdit(m, cardId, creditId) {
+  const card = m.cards.find(c => c.id === cardId);
+  const cr = card?.credits.find(x => x.id === creditId);
+  const o = owned(cardId);
+  if (!cr || !o) return;
+  const key = periodKey(cr.per, m.today, o.opened);
+  const marked = o.creditsUsed?.[cr.id]?.[key] || 0;
+  const now = creditUsedNow(card, cr, m.today, doc.transactions);
+  const auto = now > marked ? now : 0;
+  const set = cents => {
+    o.creditsUsed = o.creditsUsed || {};
+    o.creditsUsed[cr.id] = o.creditsUsed[cr.id] || {};
+    if (cents > 0) o.creditsUsed[cr.id][key] = Math.min(cents, cr.cents); else delete o.creditsUsed[cr.id][key];
+    save(); rerender();
+  };
+  openSheet({
+    title: cr.label, submitLabel: 'Save',
+    body: `<p class="note" style="text-align:center;margin:8px 4px 4px">${esc(card.short)} · ${money(cr.cents, { mask: false })} ${esc(periodLabel(cr.per))}${cr.note ? `<br>${esc(cr.note)}` : ''}</p>
+      <div class="amount-input"><span>$</span><input name="amount" inputmode="decimal" autocomplete="off" placeholder="0" value="${marked ? dollars(marked) : ''}"></div>
+      <p class="note" style="text-align:center">How much of it you’ve used so far.${auto ? ` Purchases you logged on this card already use ${money(auto, { mask: false })} of it, so it won’t show less than that.` : ''}</p>
+      <div class="grid2"><button type="button" class="btn" data-set="all">All of it</button><button type="button" class="btn" data-set="none">Not used</button></div>
+      <p class="err" id="ce-err"></p>`,
+    onMount: (root, sheet) => root.addEventListener('click', e => {
+      const b = e.target.closest('[data-set]');
+      if (!b) return;
+      set(b.dataset.set === 'all' ? cr.cents : 0);
+      sheet.close();
+    }),
+    onSubmit: form => {
+      const raw = form.elements.amount.value.trim();
+      const c = raw ? parseCents(raw) : 0;
+      if (!(c >= 0)) { $('#ce-err', form).textContent = 'Enter an amount, like 250.'; return false; }
+      if (c > cr.cents) { $('#ce-err', form).textContent = `This credit is ${money(cr.cents, { mask: false })} at most.`; return false; }
+      set(c);
+      toast(c ? `${cr.label}: ${money(c, { mask: false })} used` : `${cr.label}: not used`);
+    },
+  });
+}
+
 /** Every perk that needs switching on, as a checklist. */
 function openSetupList(m) {
   const body = () => m.cards.map(c => {
@@ -308,7 +352,7 @@ function benefitsCard(m) {
           return `<div class="row-flex" style="gap:10px;padding:6px 0">
             <div style="flex:1;min-width:0"><div class="between small" style="margin-bottom:5px"><span style="font-size:14.5px">${esc(cr.label)}</span><span class="num ink2">${money(Math.min(used, cr.cents), { whole: true, mask: false })} / ${money(cr.cents, { whole: true, mask: false })} <span class="muted">${esc(periodLabel(cr.per).replace('this ', ''))}</span></span></div>
               ${meter(used / cr.cents, { color: full ? 'var(--good)' : cardDot(m, c), thin: true })}</div>
-            ${full ? `<span style="width:30px;color:var(--good)">${ICON.check}</span>` : `<button class="tick" data-action="credit-used" data-card="${esc(c.id)}" data-credit="${esc(cr.id)}" aria-label="Mark ${esc(cr.label)} as used">${ICON.check}</button>`}
+            ${`<button class="tick${full ? ' on' : used > 0 ? ' part' : ''}" data-action="credit-used" data-card="${esc(c.id)}" data-credit="${esc(cr.id)}" aria-label="${esc(cr.label)}: change how much is used">${ICON.check}</button>`}
           </div>`;
         }).join('')}
       </div>`;
@@ -759,17 +803,7 @@ export const cardActions = {
   'card-simulate': (el, m) => openSimulate(m, el.dataset.catalog),
   'card-points': (el, m) => openPointValues(m),
   'credits-all': () => { ui.allCredits = !ui.allCredits; saveUi(); return 'render'; },
-  'credit-used': (el, m) => {
-    const card = m.cards.find(c => c.id === el.dataset.card);
-    const cr = card?.credits.find(x => x.id === el.dataset.credit);
-    const o = owned(el.dataset.card);
-    if (!cr || !o) return;
-    o.creditsUsed = o.creditsUsed || {};
-    (o.creditsUsed[cr.id] ||= {})[periodKey(cr.per, m.today, o.opened)] = cr.cents;
-    save();
-    toast(`${cr.label} marked as used`);
-    return 'render';
-  },
+  'credit-used': (el, m) => openCreditEdit(m, el.dataset.card, el.dataset.credit),
   'card-activated': el => {
     const o = owned(el.dataset.card);
     if (!o) return;
