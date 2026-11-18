@@ -74,6 +74,7 @@ const svg = (d, w = 1.8) => `<svg viewBox="0 0 24 24" fill="none" stroke="curren
 export const ICON = {
   home: svg('<path d="M3.5 10.5 12 3.8l8.5 6.7"/><path d="M5.5 9v10.2c0 .5.4.8.8.8H10v-5.5h4V20h3.7c.5 0 .8-.3.8-.8V9"/>'),
   spending: svg('<rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="M3 10h18M7 15h3"/>'),
+  receipt: svg('<path d="M6 3.5h12v17l-2.5-1.6L13 20.5l-2.5-1.6L8 20.5l-2-1.6z"/><path d="M9 8h6M9 11.5h6M9 15h3.5"/>'),
   plan: svg('<path d="M12 3v6"/><path d="M12 9c0 3-6 3-6 7v4"/><path d="M12 9c0 3 6 3 6 7v4"/><path d="M12 9v11"/>'),
   invest: svg('<path d="M3.5 17.5 9 12l3.5 3.5L20.5 7.5"/><path d="M15 7.5h5.5V13"/>'),
   goals: svg('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r=".9" fill="currentColor"/>'),

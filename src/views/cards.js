@@ -6,10 +6,11 @@ import { money, pct, fmtDate, fmtMonth, esc, ICON, openSheet, toast, $, $$ } fro
 import {
   REWARD_CATS, rewardCatById, rewardCatFor, bestCards, feeStatus, creditUsedNow, periodKey, periodLabel, periodEnd,
   perYear, pointCents, simulateCard, resolveCard, quarterOf, MERCHANTS, NETWORKS, merchantFor, guessRewardCat, valueOn,
+  missedRewards, setupItems, benefitsThisYear,
   bonusStatus, creditLive, byBest,
 } from '../domain/cards.js';
 import { parseCents } from '../domain/money.js';
-import { addMonths, monthsBetween, daysBetween } from '../domain/dates.js';
+import { addMonths, addDays, monthsBetween, daysBetween, monthKey } from '../domain/dates.js';
 import { notice } from './common.js';
 import { frequentItems } from '../domain/insights.js';
 
@@ -199,7 +200,121 @@ export function cardsView(m) {
         <button class="btn primary block" data-action="card-add">${ICON.plus}Add a card</button></div>
       ${considerCard(m)}${footer(m)}`;
   }
-  return bonusCard(m) + whichCard(m) + feesCard(m) + creditsCard(m) + yourCards(m) + considerCard(m) + footer(m);
+  return cheatSheet(m) + remindersCard(m) + bonusCard(m) + missedCard(m) + benefitsCard(m) + feesCard(m) + yourCards(m) + considerCard(m) + footer(m);
+}
+
+/** The Cards tab. */
+export function cardsTab(m) {
+  return { title: 'Cards', html: cardsView(m), fab: false };
+}
+
+/**
+ * Reminders, like a rewards app's: credits about to lapse, monthly credits still unused near
+ * month-end, perks not switched on yet, a bonus deadline, an annual fee coming up.
+ */
+function remindersCard(m) {
+  const out = [];
+  const dayOfMonth = Number(m.today.slice(8, 10));
+  for (const x of openCredits(m)) {
+    const days = x.ends ? daysBetween(m.today, x.ends) : null;
+    const soon = x.credit.per === 'month' ? dayOfMonth >= 18 : days != null && days <= 45;
+    if (!soon) continue;
+    out.push({ when: x.ends, icon: '🎁', title: `Use your ${money(x.left, { mask: false })} ${x.credit.label}`,
+      sub: `${x.card.short} · ${days === 0 ? 'last day today' : `gone after ${fmtDate(x.ends)}`}${x.credit.if ? ` · ${x.credit.if}` : ''}`,
+      action: `<button class="btn small" data-action="credit-used" data-card="${esc(x.card.id)}" data-credit="${esc(x.credit.id)}">${ICON.check}Used</button>` });
+  }
+  for (const c of m.cards) {
+    const b = bonusStatus(c, { txs: doc.transactions, today: m.today });
+    if (b?.active && b.daysLeft <= 30) out.push({ when: b.by, icon: '⭐', title: `${money(b.leftCents, { whole: true, mask: false })} to go for your ${c.short} bonus`, sub: `by ${fmtDate(b.by)} · about ${money(b.perMonthCents, { whole: true, mask: false })} a month` });
+    if (c.annualFeeCents > 0) {
+      const s = feeStatus(c, { txs: doc.transactions, today: m.today, catalog: m.catalog, prefs: m.cardPrefs, others: m.cards });
+      const days = daysBetween(m.today, s.renews);
+      if (!s.guessed && days >= 0 && days <= 60) out.push({ when: s.renews, icon: '📅', title: `${c.short} renews: ${money(s.nextFeeCents, { whole: true, mask: false })} fee`,
+        sub: `${fmtDate(s.renews)} · it’s given you ${money(s.totalCents, { whole: true, mask: false })} this year — keep, downgrade or cancel before then`, action: `<button class="btn small" data-action="card-detail" data-id="${esc(c.id)}">Review</button>` });
+    }
+  }
+  // perks to switch on: one reminder that opens the checklist
+  const setup = m.cards.flatMap(c => setupItems(c).filter(i => !i.done));
+  if (setup.length) out.push({ when: '0', icon: '⚙️', title: `${setup.length} perk${setup.length === 1 ? '' : 's'} to switch on`, sub: 'Enroll or activate once so the credits and status actually apply', action: '<button class="btn small" data-action="card-setup-list">Go through</button>' });
+  if (!out.length) return '';
+  out.sort((a, b) => String(a.when).localeCompare(String(b.when)));
+  const shown = ui.allReminders ? out : out.slice(0, 4);
+  return `<div class="card">
+    <div class="card-h"><h2>Reminders</h2>${out.length > 4 ? `<button class="link" data-action="reminders-all">${ui.allReminders ? 'Show fewer' : `All ${out.length}`}</button>` : ''}</div>
+    ${shown.map(r => `<div class="row-flex" style="align-items:flex-start;gap:10px;padding:9px 0;border-top:1px solid var(--hairline)">
+      <span style="font-size:18px;width:24px;flex:none;text-align:center">${r.icon}</span>
+      <div style="flex:1;min-width:0"><div style="font-weight:620;font-size:15px">${esc(r.title)}</div><div class="small muted" style="white-space:normal">${esc(r.sub)}</div></div>
+      ${r.action ? `<div style="flex:none">${r.action}</div>` : ''}
+    </div>`).join('')}
+  </div>`;
+}
+
+/** Every perk that needs switching on, as a checklist. */
+function openSetupList(m) {
+  const body = () => m.cards.map(c => {
+    const items = setupItems(resolveCard(owned(c.id), m.catalog));
+    if (!items.length) return '';
+    return `<div class="group-h">${esc(c.short)}</div><div class="card">${items.map(it => `<label class="check" style="align-items:flex-start;margin:6px 0">
+      <input type="checkbox" data-card="${esc(c.id)}" data-item="${esc(it.id)}" ${it.done ? 'checked' : ''}>
+      <span><span style="font-weight:600">${esc(it.label)}</span>${it.note ? `<span class="small muted" style="display:block">${esc(it.note)}</span>` : ''}</span></label>`).join('')}</div>`;
+  }).join('');
+  openSheet({
+    title: 'Switch on your perks', body: `<p class="note" style="margin:4px 4px 8px">Do these once in each card’s app or website, then tick them off.</p>${body()}`,
+    onMount: root => root.addEventListener('change', e => {
+      const box = e.target.closest('[data-item]');
+      const o = box && owned(box.dataset.card);
+      if (!o) return;
+      o.setup = (o.setup || []).filter(x => x !== box.dataset.item);
+      if (box.checked) o.setup.push(box.dataset.item);
+      save(); rerender();
+    }),
+  });
+}
+
+/** Rewards left on the table this month: purchases on a card that earned less than another would have. */
+function missedCard(m) {
+  const month = ui.missMonth || monthKey(m.today);
+  const from = month + '-01', to = month === monthKey(m.today) ? m.today : addDays(addMonths(from, 1), -1);
+  const r = missedRewards(m.cards, doc.transactions, { from, to, catalog: m.catalog, prefs: m.cardPrefs });
+  if (!r.checked) return '';
+  return `<div class="card">
+    <div class="card-h"><h2>Rewards check</h2><span class="small muted">${esc(fmtMonth(month, { year: false }))} · ${r.checked} purchase${r.checked === 1 ? '' : 's'}</span></div>
+    ${r.items.length ? `<div class="mid bad">${money(r.lostCents, { mask: false })} missed</div>
+      <div class="small ink2" style="margin-bottom:6px">by not using the best card. The biggest ones:</div>
+      ${r.items.slice(0, 4).map(x => `<div class="row-flex" style="align-items:flex-start;gap:10px;padding:7px 0;border-top:1px solid var(--hairline)">
+        <div style="flex:1;min-width:0"><div style="font-size:15px">${esc(x.t.item)} <span class="muted">· ${money(x.t.cents, { mask: false })} · ${esc(fmtDate(x.t.date))}</span></div>
+          <div class="small muted" style="white-space:normal">Used ${esc(x.used.short)} · ${esc(x.best.short)} would have earned ${money(x.lostCents, { mask: false })} more</div></div>
+      </div>`).join('')}`
+      : `<div class="row-flex" style="gap:10px"><span class="pill good">${ICON.check}Every purchase on the best card</span></div>`}
+    <p class="note" style="margin:8px 0 0">Only purchases you log with a card are checked. A card still working toward a welcome bonus never counts as a miss.</p>
+  </div>`;
+}
+
+/** Every credit on every card: what's used this period, and how much of a year's worth you've captured. */
+function benefitsCard(m) {
+  const cards = m.cards.filter(c => (c.credits || []).some(cr => cr.per !== 'every4' && creditLive(cr, m.today)));
+  if (!cards.length) return '';
+  return `<div class="card">
+    <div class="card-h"><h2>Benefits</h2><span class="small muted">this period</span></div>
+    ${cards.map(c => {
+      const y = benefitsThisYear(c, { today: m.today, txs: doc.transactions });
+      const credits = c.credits.filter(cr => cr.per !== 'every4' && creditLive(cr, m.today) && !c.owned.ignoreCredits?.includes(cr.id));
+      return `<div style="padding:10px 0 4px;border-top:1px solid var(--hairline)">
+        <button class="between" data-action="card-detail" data-id="${esc(c.id)}" style="width:100%;text-align:left;margin-bottom:4px"><span class="row-flex" style="gap:8px"><span class="dot" style="background:${cardDot(m, c)}"></span><strong style="font-weight:650">${esc(c.short)}</strong></span>
+          <span class="small muted">${money(y.usedCents, { whole: true })} used in ${m.today.slice(0, 4)}</span></button>
+        ${credits.map(cr => {
+          const used = creditUsedNow(c, cr, m.today, doc.transactions);
+          const full = used >= cr.cents;
+          return `<div class="row-flex" style="gap:10px;padding:6px 0">
+            <div style="flex:1;min-width:0"><div class="between small" style="margin-bottom:5px"><span style="font-size:14.5px">${esc(cr.label)}</span><span class="num ink2">${money(Math.min(used, cr.cents), { whole: true, mask: false })} / ${money(cr.cents, { whole: true, mask: false })} <span class="muted">${esc(periodLabel(cr.per).replace('this ', ''))}</span></span></div>
+              ${meter(used / cr.cents, { color: full ? 'var(--good)' : cardDot(m, c), thin: true })}</div>
+            ${full ? `<span style="width:30px;color:var(--good)">${ICON.check}</span>` : `<button class="tick" data-action="credit-used" data-card="${esc(c.id)}" data-credit="${esc(cr.id)}" aria-label="Mark ${esc(cr.label)} as used">${ICON.check}</button>`}
+          </div>`;
+        }).join('')}
+      </div>`;
+    }).join('')}
+    <p class="note" style="margin:6px 0 0">Store credits (Lyft, Uber Cash, DoorDash, Dunkin’…) and the travel credit fill in by themselves from purchases you log on the card. Tap a circle when you use one some other way.</p>
+  </div>`;
 }
 
 function bonusCard(m) {
@@ -662,5 +777,15 @@ export const cardActions = {
     save();
     return 'render';
   },
-  'open-cards': () => { ui.tab = 'spending'; ui.spendView = 'cards'; saveUi(); return 'render'; },
+  'open-cards': () => { ui.tab = 'cards'; saveUi(); return 'render'; },
+  'reminders-all': () => { ui.allReminders = !ui.allReminders; saveUi(); return 'render'; },
+  'card-setup-list': (el, m) => openSetupList(m),
+  'card-setup': el => {
+    const o = owned(el.dataset.card);
+    if (!o) return;
+    o.setup = [...new Set([...(o.setup || []), el.dataset.item])];
+    save();
+    toast('Done');
+    return 'render';
+  },
 };

@@ -5,7 +5,7 @@ import { monthKey, parts, daysInMonth, addMonths } from '../domain/dates.js';
 import { CATEGORIES, categoryById, suggestCategory, monthlyBudget, outstandingWork, countsAsSpending } from '../domain/spending.js';
 import { parseCents } from '../domain/money.js';
 import { txRow, sortTx, dateLabel } from './common.js';
-import { cardsView, rankForPurchase } from './cards.js';
+import { rankForPurchase } from './cards.js';
 import { rewardCatById } from '../domain/cards.js';
 import { loanBalance } from '../domain/balances.js';
 import { spendingInsights } from './insights.js';
@@ -17,12 +17,6 @@ const curMonth = m => {
 };
 
 export function spendingView(m) {
-  const seg = `<div class="seg" style="margin:2px 0 12px">${[['tx', 'Transactions'], ['cards', 'Cards']].map(([v, l]) => `<button type="button" class="${(ui.spendView || 'tx') === v ? 'on' : ''}" data-action="spend-view" data-v="${v}">${l}</button>`).join('')}</div>`;
-  if (ui.spendView === 'cards') return { title: 'Spending', html: seg + cardsView(m), fab: true, after: () => {
-    // keep the picked category chip in view after re-rendering
-    const on = $('.chips .chip.on'), box = on?.parentElement;
-    if (box) box.scrollLeft += on.getBoundingClientRect().left - box.getBoundingClientRect().left - 18;
-  } };
   const month = curMonth(m);
   const isNow = month === monthKey(m.today);
   const s = m.monthSummary(month);
@@ -35,7 +29,7 @@ export function spendingView(m) {
   const left = budget - s.spent;
   const over = budget > 0 && s.spent > budget;
 
-  let html = seg + `
+  let html = `
     <div class="between" style="margin:2px 0 10px">
       <button class="icon-btn" data-action="spend-month" data-dir="-1" aria-label="Previous month">${ICON.chevL}</button>
       <div style="font-weight:650;font-size:17px">${fmtMonth(month)}</div>
@@ -59,8 +53,6 @@ export function spendingView(m) {
     html += `<div class="notice"><span class="ico">💼</span><div style="flex:1;min-width:0"><p><strong>Work owes you ${money(owed.cents)}</strong> for ${owed.items.length} expense${owed.items.length > 1 ? 's' : ''} (oldest ${esc(fmtDate(owed.oldest))}). Not counted in your spending.</p>
       <div class="actions"><button class="btn small" data-action="work-reimbursed">Mark reimbursed</button></div></div></div>`;
   }
-
-  html += spendingInsights(m, month);
 
   // six-month trend
   const months = [];
@@ -101,6 +93,8 @@ export function spendingView(m) {
       ${credits < 0 ? `<button class="hbar${ui.spendCat && ui.spendCat !== 'credits' ? ' dim' : ''}" data-action="spend-cat" data-id="credits"><span class="em">↩️</span><span class="body"><span class="top-line"><span>Refunds & paybacks</span><span class="good">+${money(-credits)}</span></span></span></button>` : ''}
     </div>`;
   }
+
+  html += spendingInsights(m, month);
 
   // transactions
   const q = (ui.spendQuery || '').trim().toLowerCase();
@@ -361,7 +355,6 @@ export const spendingActions = {
     ui.spendMonth = next; ui.spendCat = ''; saveUi();
     return 'render';
   },
-  'spend-view': el => { ui.spendView = el.dataset.v; saveUi(); return 'render'; },
   'spend-cat': el => { ui.spendCat = ui.spendCat === el.dataset.id ? '' : el.dataset.id; saveUi(); return 'render'; },
   'edit-tx': (el, m) => { const t = doc.transactions.find(x => x.id === el.dataset.id); if (t) openTxSheet(m, t); },
   'edit-budget': (el, m) => openBudgetSheet(m, el.dataset.month),

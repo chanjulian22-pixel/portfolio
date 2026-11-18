@@ -184,7 +184,7 @@ export function mergeAdditions(parsed) {
     cardsAdded++;
   }
   const cardFor = catalogId => doc.cards.find(x => x.catalogId === catalogId)?.id;
-  let added = 0, matched = 0, already = 0;
+  let added = 0, matched = 0, already = 0, updated = 0;
   const ids = new Set(doc.transactions.map(t => t.id));
   // Only what was here before this import can be a duplicate (a report can hold two $200 exams on
   // one day), and each of those stands in for one incoming row at most.
@@ -192,7 +192,16 @@ export function mergeAdditions(parsed) {
   const taken = new Set();
   for (const t of Array.isArray(parsed.transactions) ? parsed.transactions : []) {
     if (!t || !isoOk(t.date) || !isInt(t.cents)) continue;
-    if (t.id && ids.has(t.id)) { already++; continue; }
+    if (t.id && ids.has(t.id)) {
+      // Already imported: bring its reimbursement up to date (a report that was a draft has since paid out).
+      const mine = doc.transactions.find(x => x.id === t.id);
+      if (mine.work && isoOk(t.reimbursedOn) && mine.reimbursedOn !== t.reimbursedOn) { mine.reimbursedOn = t.reimbursedOn; updated++; }
+      else if (mine.work && t.work && !t.reimbursedOn && mine.reimbursedOn && mine.reimbursedOn > (parsed.built || '').slice(0, 10)) { /* marked by hand after this file was made: keep it */ }
+      else if (mine.work && t.work && !t.reimbursedOn && mine.reimbursedOn) { delete mine.reimbursedOn; updated++; }
+      if (mine.work && t.cents !== mine.cents && Number.isInteger(t.cents)) { mine.cents = t.cents; updated++; }
+      already++;
+      continue;
+    }
     const cardId = t.card ? cardFor(t.card) : undefined;
     const reimbursedOn = isoOk(t.reimbursedOn) ? t.reimbursedOn : undefined;
     const same = before.find(x => !taken.has(x) && x.date === t.date && x.cents === t.cents);
@@ -212,7 +221,7 @@ export function mergeAdditions(parsed) {
     added++;
   }
   save();
-  return { kind: 'additions', added, matched, already, cardsAdded };
+  return { kind: 'additions', added, matched, already, updated, cardsAdded };
 }
 
 /**

@@ -342,14 +342,20 @@ export const creditLive = (credit, today) => !credit.until || today <= credit.un
 // credit marked `auto` (e.g. "any travel") by themselves. Others (Resy, Exclusive Tables) depend on
 // where you ate, so you mark those.
 const autoTracked = credit => !!(credit.merchants || credit.auto);
-const creditFits = (credit, t) => credit.merchants ? credit.merchants.includes(merchantFor(t.item)?.id) : !!credit.cats?.includes(rewardCatFor(t));
+const creditFits = (credit, t, card) => {
+  const m = merchantFor(t.item)?.id;
+  if (credit.merchants) return credit.merchants.includes(m);
+  // a store with its own credit on this card (Lyft) uses that one, not the general travel credit
+  if (m && (card.credits || []).some(c => c !== credit && c.merchants?.includes(m))) return false;
+  return !!credit.cats?.includes(rewardCatFor(t));
+};
 
 /** Per period, what logged purchases on this card used of a credit. */
 function autoUse(card, credit, txs) {
   const out = {};
   if (!autoTracked(credit)) return out;
   for (const t of txs) {
-    if (t.cardId !== card.id || !(t.cents > 0) || !creditLive(credit, t.date) || !creditFits(credit, t)) continue;
+    if (t.cardId !== card.id || !(t.cents > 0) || !creditLive(credit, t.date) || !creditFits(credit, t, card)) continue;
     const key = periodKey(credit.per, t.date, card.opened);
     out[key] = Math.min(credit.cents, (out[key] || 0) + t.cents);
   }
@@ -495,4 +501,57 @@ export function simulateCard(card, current, spend, { creditCents = 0, catalog, p
   const extraRewards = Math.round(withNew - without);
   const fee = card.annualFeeCents;
   return { extraRewardsCents: extraRewards, creditCents, feeCents: fee, netCents: extraRewards + creditCents - fee, rows };
+}
+
+// ---------------------------------------------------------------- how well your cards are used
+/** Whether a card was in your wallet on a date (opened month, or its welcome-bonus window). */
+const hadCard = (card, date) => {
+  const from = card.owned?.bonus?.from || (card.owned?.bonus?.by ? addMonths(card.owned.bonus.by, -(card.owned.bonus.months || 3)) : null) || (card.opened ? card.opened + '-01' : null);
+  return !from || date >= from || date.slice(0, 7) >= (card.opened || '0000-00');
+};
+
+/**
+ * Rewards left on the table: each purchase logged with a card, against the card that would have
+ * earned the most on it that day (that the store takes). A purchase on a card with a welcome bonus
+ * still running isn't a miss — it counts toward the bonus.
+ * @returns {{lostCents: number, items: {t, used, best, lostCents}[], checked: number}}
+ */
+export function missedRewards(cards, txs, { from, to, catalog, prefs = {} }) {
+  const items = [];
+  let checked = 0;
+  for (const t of txs) {
+    if (!t.cardId || !(t.cents > 0) || t.date < from || t.date > to) continue;
+    const have = cards.filter(c => c.id === t.cardId || hadCard(c, t.date));
+    if (!have.some(c => c.id === t.cardId)) continue;
+    checked++;
+    const merchant = merchantFor(t.item);
+    const ranked = bestCards(have, rewardCatFor(t), { today: t.date, txs: txs.filter(x => x.date < t.date), catalog, prefs, merchant }).filter(r => !r.blocked);
+    const used = ranked.find(r => r.card.id === t.cardId);
+    if (!used || used.bonus) continue;
+    const best = [...ranked].sort((a, b) => valueOn(b, t.cents) - valueOn(a, t.cents))[0];
+    const lost = valueOn(best, t.cents) - valueOn(used, t.cents);
+    if (best.card.id !== used.card.id && lost >= 5) items.push({ t, used: used.card, best: best.card, lostCents: lost });
+  }
+  items.sort((a, b) => b.lostCents - a.lostCents);
+  return { lostCents: items.reduce((s, x) => s + x.lostCents, 0), items, checked };
+}
+
+/**
+ * One-time things to switch on so a card's benefits work (DashPass, Apple subscriptions, hotel status,
+ * credits that need enrolling). Ticked off in `owned.setup`.
+ */
+export function setupItems(card) {
+  const done = new Set(card.owned?.setup || []);
+  const out = [];
+  for (const cr of card.credits || []) if (/activat|enrol|add the card/i.test(cr.note || '')) out.push({ id: 'credit:' + cr.id, label: cr.label, note: cr.note });
+  (card.perks || []).forEach((p, i) => { if (/activat/i.test(p)) out.push({ id: 'perk:' + i, label: p.replace(/\s*\((?:activate[^)]*)\)/i, ''), note: '' }); });
+  return out.map(x => ({ ...x, done: done.has(x.id) }));
+}
+
+/** Credits used this calendar year against what they're worth in a year. */
+export function benefitsThisYear(card, { today, txs = [] }) {
+  const from = `${today.slice(0, 4)}-01-01`;
+  const used = creditsInRange(card, from, today, txs);
+  const worth = (card.credits || []).filter(c => c.per !== 'every4' && creditLive(c, today)).reduce((s, c) => s + Math.round(c.cents * perYear(c.per)), 0);
+  return { usedCents: used, worthCents: worth };
 }

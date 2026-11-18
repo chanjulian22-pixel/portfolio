@@ -9,14 +9,15 @@ import { planView, planActions } from './views/plan.js';
 import { investView, investActions, investmentTotals } from './views/invest.js';
 import { goalsView, goalsActions } from './views/goals.js';
 import { settingsActions, importFile } from './views/settings.js';
-import { cardActions, openWhichCard } from './views/cards.js';
+import { cardActions, openWhichCard, cardsTab } from './views/cards.js';
 import { loadCatalog } from './cardsCatalog.js';
 import { DEMO } from './demo.js';
 import { insightActions } from './views/insights.js';
 
 const TABS = [
   { id: 'home', label: 'Home', icon: ICON.home, view: homeView },
-  { id: 'spending', label: 'Spending', icon: ICON.spending, view: spendingView },
+  { id: 'spending', label: 'Spending', icon: ICON.receipt, view: spendingView },
+  { id: 'cards', label: 'Cards', icon: ICON.spending, view: cardsTab },
   { id: 'plan', label: 'Plan', icon: ICON.plan, view: planView },
   { id: 'invest', label: 'Invest', icon: ICON.invest, view: investView },
   { id: 'goals', label: 'Goals', icon: ICON.goals, view: goalsView },

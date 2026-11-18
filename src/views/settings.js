@@ -456,7 +456,7 @@ export async function importFile(file) {
       const n = Array.isArray(peek.transactions) ? peek.transactions.length : 0;
       if (!confirm(`Add ${n} transaction${n === 1 ? '' : 's'} from ${peek.label || 'this file'}? Nothing already on this phone is replaced, and anything you’ve already logged isn’t added twice.`)) return;
       const r = importJSON(text);
-      toast(`Added ${r.added}${r.matched ? `, matched ${r.matched} you’d logged` : ''}${r.already ? `, ${r.already} already here` : ''}${r.cardsAdded ? ` · added ${r.cardsAdded} card${r.cardsAdded === 1 ? '' : 's'}` : ''}`);
+      toast(`Added ${r.added}${r.matched ? `, matched ${r.matched} you’d logged` : ''}${r.updated ? `, updated ${r.updated}` : ''}${r.already ? `, ${r.already} already here` : ''}${r.cardsAdded ? ` · added ${r.cardsAdded} card${r.cardsAdded === 1 ? '' : 's'}` : ''}`);
       window.dispatchEvent(new Event('ledger:render'));
       return;
     }
