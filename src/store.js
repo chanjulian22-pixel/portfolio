@@ -208,7 +208,9 @@ export function mergeAdditions(parsed) {
     if (same) {
       taken.add(same);
       if (t.work && !same.work) { same.work = true; delete same.fundedBy; matched++; } else already++;
-      if (t.work && reimbursedOn && !same.reimbursedOn) same.reimbursedOn = reimbursedOn;
+      if (t.work && reimbursedOn && same.reimbursedOn !== reimbursedOn) same.reimbursedOn = reimbursedOn;
+      // the report says it isn't paid yet: undo an earlier "reimbursed" (unless you marked it after this file was made)
+      else if (t.work && !reimbursedOn && same.reimbursedOn && same.reimbursedOn <= (parsed.built || '').slice(0, 10)) delete same.reimbursedOn;
       if (cardId && !same.cardId) same.cardId = cardId;
       continue;
     }
