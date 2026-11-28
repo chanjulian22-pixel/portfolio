@@ -163,6 +163,33 @@ document.addEventListener('visibilitychange', () => {
   }
   if (changed) save();
 })();
+// A big planned expense is paid from paychecks only: from its month, what would go to the residual
+// bucket (Schwab) pays it until it's covered. Nothing saved or invested is touched.
+(function payBigExpensesFromPaychecks() {
+  if (DEMO) return;
+  const cfg = doc.config;
+  const residual = cfg.buckets.find(b => b.isResidual);
+  if (!residual) return;
+  let changed = 0;
+  for (const e of cfg.events || []) {
+    if (!(e.outflowCents > 0) || e.date <= todayISO() || e.payFrom === 'paychecks') continue;
+    const fromResidual = e.fromBucket === residual.id || e.refillFrom === 'residual' || String(e.fromBucket || '').startsWith('fund-');
+    if (!fromResidual) continue;
+    const old = cfg.buckets.find(b => b.id === e.fromBucket && String(b.id).startsWith('fund-'));
+    if (old && !doc.contributions.some(c => c.bucketId === old.id)) cfg.buckets = cfg.buckets.filter(b => b !== old);
+    const id = 'event-' + e.id;
+    if (!cfg.buckets.some(b => b.id === id)) {
+      const uses = c => cfg.buckets.filter(b => b.color === c).length;
+      cfg.buckets.splice(cfg.buckets.indexOf(residual) + 1, 0, { id, label: /move/i.test(e.label) ? 'Move-out' : e.label, kind: 'expense',
+        color: [1, 2, 3, 4, 5, 6, 7, 8].sort((x, y) => uses(x) - uses(y) || x - y)[0], purpose: `Paid from paychecks, in place of ${residual.label}` });
+    }
+    delete e.fromBucket; delete e.refillFrom;
+    if (e.note) e.note = e.note.replace(/Plan: pause Schwab, USFR and travel for ~3 months before; keep the 401\(k\) going\./,'Paid from paychecks from the move month, in place of Schwab; nothing saved or invested is touched.');
+    Object.assign(e, { payFrom: 'paychecks', bucket: id });
+    changed++;
+  }
+  if (changed) { save(); setTimeout(() => toast('Your move-out is now paid from paychecks — nothing you’ve saved or invested is touched'), 600); }
+})();
 if (DEMO) document.title = 'Ledger · demo';
 applyTheme();
 render();

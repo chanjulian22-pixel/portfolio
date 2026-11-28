@@ -139,7 +139,7 @@ export function buildModel(today) {
     const months = Math.max(2, Math.ceil(daysBetween(today, pd.date) / 30) + 1);
     const proj = projection(Math.max(24, months));
     const pc = proj?.paychecks.find(p => p.date === pd.date);
-    if (pc) return { ...base, lines: withState(pd, pc.lines, sent), notices: pc.notices, deferralCents: pc.deferralCents, matchCents: pc.matchCents };
+    if (pc) return { ...base, lines: withState(pd, pc.lines, sent), notices: pc.notices, refill: pc.refill, deferralCents: pc.deferralCents, matchCents: pc.matchCents };
     const failed = proj?.errors.find(e => e.date === pd.date);
     return failed ? { ...base, error: failed.message } : base;
   };
@@ -154,6 +154,13 @@ export function buildModel(today) {
       const take = Math.min(d, a.p1); a.p1 -= take; d -= take;   // raising spending makes p1 larger (take < 0)
       if (d > 0) a.p2 = Math.max(0, a.p2 - d);
     }
+    return project({ config: alt, startDate: today, endDate: addMonths(today, months), balances: centsOf(balances), ytd, sentAhead, catchUp, includeStart: true });
+  };
+
+  /** The forecast with every stock bucket growing at `rate` a year (cash buckets keep their own rate). */
+  const atReturn = (rate, months) => {
+    const alt = JSON.parse(JSON.stringify(config));
+    for (const b of alt.buckets) if (b.assetClass === 'equity') b.expectedAnnualReturn = rate;
     return project({ config: alt, startDate: today, endDate: addMonths(today, months), balances: centsOf(balances), ytd, sentAhead, catchUp, includeStart: true });
   };
 
@@ -215,7 +222,7 @@ export function buildModel(today) {
   return {
     catalog, cards, cardPrefs: doc.cardPrefs || {},
     today, config, buckets, bucketById, periods, accountValues, balances, nw, ytd, phaseErrors,
-    hasIncome, hasData, projection, planFor, next, upcoming, recentPaydays, pastPaydays, unsent, catchUp, whatIf, burn, runway, goals, liveTickers,
+    hasIncome, hasData, projection, planFor, next, upcoming, recentPaydays, pastPaydays, unsent, catchUp, whatIf, atReturn, burn, runway, goals, liveTickers,
     quoteTime: latestQuoteTime(liveTickers),
     monthBudget: month => monthlyBudget(config, month),
     monthSummary: month => monthSummary(doc.transactions, month),

@@ -1,7 +1,7 @@
 // Insight cards: today at a glance, what's coming up, spending patterns, the month in review, and
 // a what-if slider for the forecast.
 import { doc, ui, saveUi } from '../store.js';
-import { meter } from '../charts.js';
+import { meter, chart } from '../charts.js';
 import { money, compact, pct, fmtDate, fmtMonth, relDays, esc, ICON, openSheet, $ } from '../ui.js';
 import { safeToSpend, compareToLastMonth, topPlaces, recurringCharges, monthReview } from '../domain/insights.js';
 import { addDays, addMonths, daysBetween, monthKey, monthsBetween } from '../domain/dates.js';
@@ -124,6 +124,64 @@ export function openMonthReview(m, month) {
   });
 }
 
+// ---------------------------------------------------------------- Goals: at different returns
+const RATES = [0.04, 0.06, 0.08, 0.10];
+const RATE_COLORS = ['var(--s4)', 'var(--s3)', 'var(--s1)', 'var(--s2)'];
+/** Your invested money (stock buckets) under a range of yearly returns, with a slider for any rate. */
+export function returnsCard(m) {
+  if (!m.hasIncome) return '';
+  const ids = m.buckets.filter(b => b.assetClass === 'equity').map(b => b.id);
+  const inv = p => ids.reduce((s, id) => s + (p.byBucket[id] || 0), 0);
+  const horizon = ui.retHorizon || 10;
+  const end = addMonths(m.today, horizon * 12);
+  const planRate = m.buckets.find(b => b.isResidual)?.expectedAnnualReturn ?? 0.07;
+  const runs = RATES.map(r => ({ r, proj: m.atReturn(r, horizon * 12) }));
+  const series = runs.map((x, i) => ({ key: String(x.r), label: `${Math.round(x.r * 100)}% a year`, color: RATE_COLORS[i], dashed: x.r !== planRate,
+    points: x.proj.points.filter((p, k) => k === 0 || p.date.slice(5, 7) === '12' || p.date === end || k % 6 === 0).map(p => ({ x: p.date, y: inv(p) })) }));
+  return `<div class="card">
+    <div class="card-h"><h2>At different returns</h2>
+      <div class="seg" style="width:130px">${[[5, '5Y'], [10, '10Y'], [20, '20Y']].map(([n, l]) => `<button type="button" class="${horizon === n ? 'on' : ''}" data-action="ret-horizon" data-n="${n}">${l}</button>`).join('')}</div></div>
+    ${chart({ type: 'lines', height: 190, yZero: true, label: 'Invested money at 4, 6, 8 and 10 percent a year', series,
+      tooltip: ({ x, values }) => `<div>${esc(fmtMonth(x.slice(0, 7)))}</div>` + [...values].sort((a, b) => b.y - a.y).map(v => `<div class="k"><i style="background:${v.color}"></i><b style="display:inline">${esc(compact(v.y))}</b>&nbsp;at ${esc(v.label)}</div>`).join('') })}
+    <div class="chart-legend">${runs.map((x, i) => `<span><i style="background:${RATE_COLORS[i]}"></i>${Math.round(x.r * 100)}%${x.r === planRate ? ' (your plan)' : ''}</span>`).join('')}</div>
+    <div class="legend" id="ret-rows"></div>
+    <div class="between mt12"><span class="ink2">Try any return</span><strong id="ret-pick">${Math.round(planRate * 100)}% a year</strong></div>
+    <input type="range" id="ret-range" min="0" max="15" step="0.5" value="${planRate * 100}" style="width:100%;margin:10px 0 2px;accent-color:var(--ink)" aria-label="Yearly return">
+    <div class="between small muted"><span>0%</span><span>15%</span></div>
+    <div class="legend" id="ret-out"></div>
+    <p class="note" style="margin:10px 0 0">Your plan uses ${Math.round(planRate * 100)}% for stocks. The US stock market has averaged roughly 10% a year over the long run (about 7% after inflation), but single years swing far more than that. Cash and savings keep their own rates here.</p>
+  </div>`;
+}
+export function mountReturns(m) {
+  const range = $('#ret-range');
+  if (!range) return;
+  const ids = m.buckets.filter(b => b.assetClass === 'equity').map(b => b.id);
+  const inv = p => ids.reduce((s, id) => s + (p.byBucket[id] || 0), 0);
+  const goal = doc.config.investGoalCents || 10000000;
+  const horizon = ui.retHorizon || 10;
+  const row = (label, sub, val) => `<div class="legend-row"><span class="lbl">${label}<small>${sub}</small></span><span class="val">${val}</span></div>`;
+  const describe = proj => {
+    const last = proj.points[proj.points.length - 1];
+    const hit = proj.points.find(p => inv(p) >= goal);
+    const putIn = ids.reduce((s, id) => s + (last.principalByBucket[id] || 0), 0);
+    return { value: inv(last), putIn, growth: inv(last) - putIn, hit: hit?.date };
+  };
+  $('#ret-rows').innerHTML = RATES.map(r => {
+    const d = describe(m.atReturn(r, horizon * 12));
+    return row(`${Math.round(r * 100)}% a year`, `${compact(goal, { mask: false })} invested ${d.hit ? fmtMonth(d.hit.slice(0, 7), { short: true }) : `not within ${horizon} years`}`, `${compact(d.value)}<small>in ${horizon} years</small>`);
+  }).join('');
+  const draw = () => {
+    const r = Number(range.value) / 100;
+    $('#ret-pick').textContent = `${+(r * 100).toFixed(1)}% a year`;
+    const d = describe(m.atReturn(r, horizon * 12));
+    $('#ret-out').innerHTML = row(`In ${horizon} years`, `${money(d.putIn, { whole: true })} you put in + ${money(d.growth, { whole: true })} growth`, compact(d.value))
+      + row(`${compact(goal, { mask: false })} invested`, 'when you get there at this return', d.hit ? esc(fmtMonth(d.hit.slice(0, 7), { short: true })) : '—');
+  };
+  let t;
+  range.addEventListener('input', () => { clearTimeout(t); t = setTimeout(draw, 60); });
+  draw();
+}
+
 // ---------------------------------------------------------------- Goals: what if
 export function whatIfCard(m) {
   if (!m.hasIncome) return '';
@@ -164,5 +222,6 @@ export function mountWhatIf(m) {
 
 export const insightActions = {
   'toggle-upcoming': () => { ui.allUpcoming = !ui.allUpcoming; saveUi(); return 'render'; },
+  'ret-horizon': el => { ui.retHorizon = Number(el.dataset.n); saveUi(); return 'render'; },
   'month-review': (el, m) => openMonthReview(m, el.dataset.month),
 };

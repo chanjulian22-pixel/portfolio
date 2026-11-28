@@ -4,7 +4,7 @@ import { money, compact, pct, fmtDate, fmtMonth, esc, ICON } from '../ui.js';
 import { monthsBetween, daysBetween } from '../domain/dates.js';
 import { phaseOn, plannedFor } from '../domain/allocation.js';
 import { bucketColor, notice } from './common.js';
-import { whatIfCard, mountWhatIf } from './insights.js';
+import { whatIfCard, mountWhatIf, returnsCard, mountReturns } from './insights.js';
 
 function milestoneText(ms, m) {
   const b = m.bucketById[ms.bucketId];
@@ -49,6 +49,7 @@ export function goalsView(m) {
       ${proj.points.filter((p, i) => i === 0 || p.date.slice(5, 7) % 3 === 0 || i === proj.points.length - 1).map(p => `<tr><td>${esc(fmtMonth(p.date.slice(0, 7), { short: true }))}</td><td>${compact(p.principal)}</td><td>${compact(p.growth)}</td><td>${compact(p.total)}</td></tr>`).join('')}</table></details>
   </div>`;
 
+  html += returnsCard(m);
   html += whatIfCard(m);
 
   // runway
@@ -86,6 +87,7 @@ export function goalsView(m) {
       <div class="card-h"><h2>${esc(e.label)}</h2><span class="pill">${ICON.clock}${months} months</span></div>
       <div class="between"><div><div class="mid">${money(e.outflowCents || 0, { whole: true })}</div><div class="small muted">around ${esc(fmtDate(e.date, { year: true }))}</div></div>
       ${Object.entries(e.setTargets || {}).map(([id, c]) => `<div style="text-align:right"><div class="small muted">${esc(m.bucketById[id]?.label)} target then</div><div style="font-weight:650">${money(c, { whole: true })}</div></div>`).join('')}</div>
+      ${eventFunding(m, e)}
       ${e.note ? `<p class="note mt12" style="margin-bottom:0">${esc(e.note)}</p>` : ''}
     </div>`;
   }
@@ -101,7 +103,22 @@ export function goalsView(m) {
     </div>`;
   }
   if (proj.errors.length) html += notice({ icon: ICON.alert, text: `${proj.errors.length} paycheck${proj.errors.length > 1 ? 's' : ''} in this window can’t be allocated: ${esc(proj.errors[0].message)}` });
-  return { title: 'Goals', html, after: () => mountWhatIf(m) };
+  return { title: 'Goals', html, after: () => { mountReturns(m); mountWhatIf(m); } };
+}
+
+/** How a big expense gets paid: from which bucket, or from which paychecks. */
+function eventFunding(m, e) {
+  if (e.payFrom === 'paychecks') {
+    const months = Math.max(36, monthsBetween(m.today, e.date) + 12);
+    const pcs = (m.projection(months)?.paychecks || []).filter(p => p.refill?.id === e.id);
+    const residual = m.buckets.find(b => b.isResidual);
+    const share = p => p.lines.find(l => l.bucketId === e.bucket)?.redirectCents || 0;
+    return `<p class="note mt12" style="margin-bottom:0">Paid from paychecks only — nothing you’ve saved or invested is touched. Investing carries on as normal until ${esc(fmtMonth(e.date.slice(0, 7)))}; from then, what would go to ${esc(residual?.label || 'investing')} pays for it${pcs.length ? `, over ${pcs.length} paycheck${pcs.length === 1 ? '' : 's'} through ${esc(fmtDate(pcs[pcs.length - 1].date, { year: true }))}` : ''}.</p>
+      ${pcs.length ? `<div class="legend mt8">${pcs.map(p => `<div class="legend-row"><span class="lbl">${esc(fmtDate(p.date, { year: true }))}</span><span class="val">${money(share(p))}</span></div>`).join('')}</div>` : ''}`;
+  }
+  const from = m.bucketById[e.fromBucket];
+  if (!from) return '';
+  return `<p class="note mt12" style="margin-bottom:0">Paid ${from.isResidual ? 'by selling from' : 'from'} ${esc(from.label)}.</p>`;
 }
 
 function lastPhaseEnd(m) {

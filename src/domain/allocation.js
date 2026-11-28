@@ -104,8 +104,10 @@ export function plannedFor(phase, bucketId, index) {
  * @param {Record<string, number>} [p.balances] current balances, for capped buckets
  * @param {Record<string, number>} [p.ytd] contributions so far this calendar year, for limited buckets
  * @param {Record<string, number>} [p.targetOverrides] e.g. a target raised by a future event
+ * @param {{to: string, maxCents: number}} [p.redirect] send up to maxCents of what the residual would
+ *   get to another bucket instead (paying for a big expense out of paychecks)
  */
-export function allocatePaycheck({ takeHomeCents, index, date, buckets, phase, sweeps = [], balances = {}, ytd = {}, targetOverrides = {}, extra = {} }) {
+export function allocatePaycheck({ takeHomeCents, index, date, buckets, phase, sweeps = [], balances = {}, ytd = {}, targetOverrides = {}, extra = {}, redirect = null }) {
   const allocatable = buckets.filter(isAllocatable);
   const residuals = allocatable.filter(b => b.isResidual);
   if (residuals.length !== 1) throw new AllocationError('Exactly one bucket must receive the residual.', { residuals: residuals.map(b => b.id) });
@@ -158,12 +160,19 @@ export function allocatePaycheck({ takeHomeCents, index, date, buckets, phase, s
     );
   }
   amounts[residual.id] = residualCents;
+  let redirected = 0;
+  if (redirect && redirect.maxCents > 0 && byId[redirect.to] && redirect.to !== residual.id) {
+    redirected = Math.min(residualCents, redirect.maxCents);
+    amounts[residual.id] -= redirected;
+    amounts[redirect.to] += redirected;
+  }
 
   const lines = allocatable.map(b => ({
     bucketId: b.id,
     cents: amounts[b.id],
     plannedCents: b === residual ? null : planned[b.id],
     catchUpCents: b === residual ? 0 : extra[b.id] || 0,
+    redirectCents: b === residual ? (redirected ? -redirected : 0) : redirect && b.id === redirect.to ? redirected : 0,
     residual: b === residual,
   }));
   const total = sum(lines.map(l => l.cents));

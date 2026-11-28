@@ -91,6 +91,8 @@ export function planView(m) {
             ${inbound.map(n => `<small style="color:var(--ink-2)">↳ includes ${money(n.cents)} from ${esc(bucket(n.bucketId)?.label)}</small>`).join('')}
             ${l.catchUpCents ? `<small style="color:var(--ink-2)">↳ includes ${money(l.catchUpCents)} catch-up — an earlier paycheck this month was raised after it was sent</small>` : ''}
             ${l.state === 'catchup' ? `<small style="color:var(--ink-2)">↳ ${money(l.leftCents)} short of the plan — your next paycheck makes it up</small>` : ''}
+            ${l.redirectCents > 0 ? `<small style="color:var(--ink-2)">↳ this paycheck’s share of ${esc(plan.refill?.label || 'a big expense')}, in place of investing</small>` : ''}
+            ${l.redirectCents < 0 ? `<small style="color:var(--ink-2)">↳ paused — ${money(-l.redirectCents)} goes to ${esc(m.bucketById[plan.refill?.bucket]?.label || 'a big expense')} this paycheck</small>` : ''}
             ${l.overSentCents ? `<small style="color:var(--ink-2)">↳ ${money(l.overSentCents)} less than usual — that much extra went to another bucket</small>` : ''}
             ${doc.contributions.some(c => c.paycheck === sel.date && c.bucketId === l.bucketId && c.pendingBuy) ? '<small style="color:var(--ink-2)">↳ buy not logged yet — tap Log buy in Invest</small>' : ''}
           </button>

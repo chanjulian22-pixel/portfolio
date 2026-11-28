@@ -42,6 +42,11 @@ export function project({ config, startDate, endDate, balances, ytd = {}, sentAh
   const errors = [];
   const reached = new Set();
   let owed = catchUp;
+  // A big expense with `payFrom: 'paychecks'`: nothing you've saved or invested is touched. From the
+  // start of its month, what the residual bucket would get goes to the expense's own bucket instead,
+  // paycheck after paycheck, until the expense is covered.
+  const refills = (config.events || []).filter(e => e.payFrom === 'paychecks' && e.bucket && e.outflowCents > 0 && e.date.slice(0, 7) + '-01' > startDate)
+    .map(e => ({ e, from: e.date.slice(0, 7) + '-01', left: e.outflowCents }));
 
   const total = obj => Object.values(obj).reduce((a, b) => a + b, 0);
   const snapshot = date => ({ date, total: total(bal), principal: total(principal), growth: total(growth), byBucket: { ...bal }, principalByBucket: { ...principal } });
@@ -110,7 +115,9 @@ export function project({ config, startDate, endDate, balances, ytd = {}, sentAh
         result = allocatePaycheck({
           takeHomeCents: pay.takeHomeCents, index: p.index, date: p.date, buckets, phase, sweeps: config.sweeps,
           balances: ahead ? less(bal) : bal, ytd: ahead ? less(ytdNow) : ytdNow, targetOverrides, extra: owed,
+          redirect: (() => { const r = refills.find(x => x.left > 0 && p.date >= x.from); return r ? { to: r.e.bucket, maxCents: r.left, eventId: r.e.id } : null; })(),
         });
+        for (const r of refills) if (r.left > 0 && p.date >= r.from) { const got = result.lines.find(l => l.bucketId === r.e.bucket)?.redirectCents || 0; r.left -= got; if (got) result.refill = r.e; break; }
         owed = {};
       } catch (err) {
         if (!(err instanceof AllocationError)) throw err;
@@ -139,7 +146,7 @@ export function project({ config, startDate, endDate, balances, ytd = {}, sentAh
       }
       paychecks.push({
         date: p.date, index: p.index, takeHomeCents: pay.takeHomeCents, source: pay.source,
-        phaseId: phase?.id || null, extended, lines, notices: result.notices,
+        phaseId: phase?.id || null, extended, lines, notices: result.notices, refill: result.refill || null,
         deferralCents: deferral, matchCents: match, missedMatchCents: pay.matchCents - match,
       });
       checkMilestones(p.date);
